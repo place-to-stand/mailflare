@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { domains, mailboxAliases, mailboxes } from "@/db/schema";
 import { requireUser } from "@/lib/auth/cookies";
+import { isAdmin } from "@/lib/auth/admin";
 import { getEnv } from "@/lib/cloudflare";
 import { deleteEmailRoutingRuleForAddress, ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { newId } from "@/lib/ids";
@@ -75,6 +76,9 @@ export async function POST(request: Request, { params }: MailboxRouteParams) {
 	const { id } = await params;
 	const env = getEnv();
 	const user = await requireUser(env, request);
+	// An alias claims an address on any of the domain owner's domains (postmaster@,
+	// admin@, a colleague's address), so only admins may hand them out.
+	if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	const parsed = createMailboxAliasSchema.safeParse(await request.json());
 	if (!parsed.success) {
 		return NextResponse.json({ error: "Enter a valid alias username and domain" }, { status: 400 });
@@ -115,6 +119,22 @@ export async function POST(request: Request, { params }: MailboxRouteParams) {
 	if (existingAlias) {
 		return NextResponse.json({ error: "An alias already uses this address" }, { status: 409 });
 	}
+	// Aliases resolve before use-all-domains mailboxes, so one would silently take this address's mail.
+	const [allDomainsMailbox] = await db
+		.select({ id: mailboxes.id })
+		.from(mailboxes)
+		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
+		.where(and(
+			eq(mailboxes.localPart, localPart),
+			eq(mailboxes.useAllDomains, true),
+			eq(mailboxes.disabled, false),
+			ne(mailboxes.id, id),
+			eq(domains.userId, ownerId!),
+		))
+		.limit(1);
+	if (allDomainsMailbox) {
+		return NextResponse.json({ error: "A mailbox already uses this address" }, { status: 409 });
+	}
 
 	const aliasId = newId("als");
 	const inserted = await db
@@ -150,6 +170,7 @@ export async function DELETE(request: Request, { params }: MailboxRouteParams) {
 	const { id } = await params;
 	const env = getEnv();
 	const user = await requireUser(env, request);
+	if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	const aliasId = new URL(request.url).searchParams.get("aliasId");
 	if (!aliasId) return NextResponse.json({ error: "Alias is required" }, { status: 400 });
 

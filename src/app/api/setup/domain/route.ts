@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasAdminAccount } from "@/lib/auth/setup";
+import { hasValidSetupToken, setupTokenRequiredResponse } from "@/lib/auth/setup-token";
 import { getEnv } from "@/lib/cloudflare";
 import { preflightDomain } from "@/lib/domains/preflight";
 import { getPrimaryDomain } from "@/lib/user";
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
 	if (await hasAdminAccount(env)) {
 		return NextResponse.json({ error: "Initial setup is already complete" }, { status: 403 });
 	}
+	if (!hasValidSetupToken(env, request)) return setupTokenRequiredResponse(env);
 
 	const existing = await getPrimaryDomain(env);
 	if (existing) {

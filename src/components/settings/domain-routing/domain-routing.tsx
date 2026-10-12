@@ -21,6 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
 import { CardGridSkeleton } from "@/components/page-skeletons";
 import { useSelectedMailbox } from "@/components/mailbox-provider";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import type { DomainRoutingProps, DomainRule, DomainRuleInput } from "./types";
 import {
 	ACTION_LABELS,
@@ -46,6 +47,7 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 	const { t } = useLanguage();
 	const qc = useQueryClient();
 	const { selectedMailbox, isLoading: isMailboxLoading } = useSelectedMailbox();
+	const currentUser = useCurrentUser();
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [editing, setEditing] = useState<DomainRule | null>(null);
 	const [form, setForm] = useState<DomainRuleInput>(emptyRuleInput(""));
@@ -54,7 +56,8 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 	const domainId = domain?.id ?? selectedMailbox?.domainId ?? "";
 	const mailboxId = selectedMailbox?.id ?? "";
 	const mailboxAccessId = domain ? undefined : mailboxId;
-	const canManage = !!domain || selectedMailbox?.permission === "full_access";
+	// The API only lets domain admins write domain rules.
+	const canManage = !!domain || (currentUser?.role === "admin" && selectedMailbox?.permission === "full_access");
 	const rulesQueryKey = ["domain-rules", domainId, mailboxAccessId ?? "admin"] as const;
 
 	const rules = useQuery({
@@ -106,6 +109,8 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 		setForm(ruleToInput(rule));
 		setDialogOpen(true);
 	}
+
+	if (!domain && currentUser && currentUser.role !== "admin") return null;
 
 	const blockRules = (rules.data?.rules ?? []).filter((r) => r.action === "reject");
 	const fallbackRules = (rules.data?.rules ?? []).filter((r) => r.action !== "reject");

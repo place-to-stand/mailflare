@@ -6,7 +6,6 @@ import { getEnv } from "@/lib/cloudflare";
 import { newId } from "@/lib/ids";
 import { domainRoutingRuleSchema } from "@/lib/validators";
 import {
-	assertRuleMailbox,
 	assertAdminRuleMailbox,
 	getAdminDomain,
 	getManagedDomainMailbox,
@@ -53,16 +52,15 @@ export async function POST(request: Request) {
 	}
 
 	const db = getDb(env);
-	const mailboxId = new URL(request.url).searchParams.get("mailboxId");
-	const adminDomain = !mailboxId ? await getAdminDomain(db, user, parsed.data.domainId) : null;
-	if (!adminDomain && (!mailboxId || !(await getManagedDomainMailbox(db, user, mailboxId, parsed.data.domainId)))) {
-		return NextResponse.json({ error: "Domain or mailbox access is required" }, { status: 403 });
+	// Domain rules apply to every address on the domain (a reject runs before any
+	// mailbox lookup), so only an admin who owns the domain may write them.
+	const adminDomain = await getAdminDomain(db, user, parsed.data.domainId);
+	if (!adminDomain) {
+		return NextResponse.json({ error: "Domain admin access is required" }, { status: 403 });
 	}
 
 	const destinationAllowed = parsed.data.mailboxId
-		? adminDomain
-			? await assertAdminRuleMailbox(db, parsed.data.mailboxId, parsed.data.domainId)
-			: await assertRuleMailbox(db, user, parsed.data.mailboxId, parsed.data.domainId)
+		? await assertAdminRuleMailbox(db, parsed.data.mailboxId, parsed.data.domainId)
 		: true;
 	if (!destinationAllowed) {
 		return NextResponse.json({ error: "Mailbox access is required for the destination" }, { status: 403 });

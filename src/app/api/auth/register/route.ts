@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { mailboxes, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 import { hasAdminAccount } from "@/lib/auth/setup";
+import { hasValidSetupToken, setupTokenRequiredResponse } from "@/lib/auth/setup-token";
 import { SESSION_COOKIE } from "@/lib/auth/session";
 import { newId } from "@/lib/ids";
 import { firstRunRegisterSchema } from "@/lib/validators";
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
 	if (await hasAdminAccount(env)) {
 		return NextResponse.json({ error: "Registration is closed after the first account is created" }, { status: 403 });
 	}
+	if (!hasValidSetupToken(env, request)) return setupTokenRequiredResponse(env);
 
 	let body: unknown;
 	try {

@@ -51,6 +51,9 @@
       "GITHUB_UPDATE_REPO": {
         "description": "Your github repository that connect to cloudflare worker"
       },
+      "SETUP_TOKEN": {
+        "description": "Long random secret required to create the first admin. Open /setup?token=<SETUP_TOKEN> to run setup; without it, setup is closed. Generate with `openssl rand -hex 32`."
+      },
       "CF_EMAIL": {
         "description": "Legacy Global API Key auth only. Use this with `CF_API_KEY` instead of `CF_TOKEN`."
       },

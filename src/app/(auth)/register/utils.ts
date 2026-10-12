@@ -1,5 +1,6 @@
 import { readResponseJson } from "@/lib/http/response";
 import { clearClientSessionToken } from "@/lib/auth/client";
+import { SETUP_TOKEN_HEADER } from "@/lib/auth/setup-token-utils";
 import type {
 	DomainSetupResult,
 	MxCheckResult,
@@ -8,8 +9,30 @@ import type {
 	SetupStatus,
 } from "./types";
 
+const SETUP_TOKEN_STORAGE_KEY = "mailflare.setupToken";
+
+/** The token from /setup?token=…, kept for the tab and taken out of the address bar. */
+function getSetupToken(): string {
+	const url = new URL(window.location.href);
+	const fromUrl = url.searchParams.get("token");
+	try {
+		if (fromUrl) {
+			sessionStorage.setItem(SETUP_TOKEN_STORAGE_KEY, fromUrl);
+			url.searchParams.delete("token");
+			window.history.replaceState(window.history.state, "", url);
+		}
+		return fromUrl ?? sessionStorage.getItem(SETUP_TOKEN_STORAGE_KEY) ?? "";
+	} catch {
+		return fromUrl ?? "";
+	}
+}
+
+function setupHeaders(json = false): HeadersInit {
+	return { ...(json ? { "Content-Type": "application/json" } : {}), [SETUP_TOKEN_HEADER]: getSetupToken() };
+}
+
 export async function prepareSetup(): Promise<{ ok: boolean; data: SetupPreparationResult }> {
-	const res = await fetch("/api/setup/prepare", { method: "POST" });
+	const res = await fetch("/api/setup/prepare", { method: "POST", headers: setupHeaders() });
 	return {
 		ok: res.ok,
 		data: (await readResponseJson(res)) as SetupPreparationResult,
@@ -26,7 +49,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 export async function submitPrimaryDomain(hostname: string, skipDns = false): Promise<{ ok: boolean; data: DomainSetupResult }> {
 	const res = await fetch("/api/setup/domain", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: setupHeaders(true),
 		body: JSON.stringify(skipDns ? { hostname, skipDns: true } : { hostname }),
 	});
 
@@ -39,7 +62,7 @@ export async function submitPrimaryDomain(hostname: string, skipDns = false): Pr
 export async function checkExistingMx(hostname: string): Promise<{ ok: boolean; data: MxCheckResult }> {
 	const res = await fetch("/api/setup/domain/mx", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: setupHeaders(true),
 		body: JSON.stringify({ hostname }),
 	});
 
@@ -55,7 +78,7 @@ export async function submitRegistration(
 ): Promise<{ ok: boolean; data: RegisterResult }> {
 	const res = await fetch("/api/auth/register", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: setupHeaders(true),
 		body: JSON.stringify(
 			payload.firstRun
 				? {
@@ -80,6 +103,13 @@ export async function submitRegistration(
 	});
 
 	const data = (await readResponseJson(res)) as RegisterResult;
-	if (res.ok) clearClientSessionToken();
+	if (res.ok) {
+		clearClientSessionToken();
+		try {
+			sessionStorage.removeItem(SETUP_TOKEN_STORAGE_KEY);
+		} catch {
+			// Storage can be unavailable; the token then only lived in this page's URL.
+		}
+	}
 	return { ok: res.ok, data };
 }

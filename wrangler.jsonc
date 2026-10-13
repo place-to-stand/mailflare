@@ -1,13 +1,24 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "mailflare",
+	// Place To Stand account, which owns placetostand.agency and placetostandagency.com.
+	"account_id": "c33832da8f7fead4487af4c7852fb451",
 	"main": "./worker.ts",
-	// Serve only on the custom domain, where Cloudflare Access protects the app.
-	// A *.workers.dev or preview URL would bypass that policy.
+	// Serve only on the custom domain. If Cloudflare Access is ever put in front
+	// of it, a *.workers.dev or preview URL would bypass that policy.
 	"workers_dev": false,
 	"preview_urls": false,
+	"routes": [
+		{
+			"pattern": "mail.placetostandagency.com",
+			"custom_domain": true,
+		},
+	],
 	"compatibility_date": "2026-05-20",
 	"keep_vars": true,
+	"vars": {
+		"APP_URL": "https://mail.placetostandagency.com",
+	},
 	"compatibility_flags": [
 		"nodejs_compat",
 		"global_fetch_strictly_public"
@@ -80,6 +91,7 @@
 		{
 			"binding": "DB",
 			"database_name": "mailflare",
+			"database_id": "5986da05-674f-442c-bfb1-219148f52144",
 			"migrations_dir": "drizzle/migrations",
 		},
 	],

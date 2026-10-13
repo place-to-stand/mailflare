@@ -1,3 +1,4 @@
+import { LOCAL_FEATURES_ENABLED, getLocalLicenseStatus, getLocalLicenseEntitlements } from "./fork-policy";
 import { eq } from "drizzle-orm";
 import packageJson from "../../../package.json";
 import { getDb } from "@/db";
@@ -40,10 +41,12 @@ function toLicenseStatus(settings: typeof licenseSettings.$inferSelect): License
 }
 
 export async function getLicenseStatus(env: CloudflareEnv): Promise<LicenseStatus> {
+	if (LOCAL_FEATURES_ENABLED) return getLocalLicenseStatus();
 	return toLicenseStatus(await getOrCreateLicenseSettings(env));
 }
 
 export async function getLicenseEntitlements(env: CloudflareEnv): Promise<LicenseEntitlements> {
+	if (LOCAL_FEATURES_ENABLED) return getLocalLicenseEntitlements();
 	try {
 		const status = await getLicenseStatus(env);
 		// Pro adds accounts up to its seat limit; Team is unlimited and also unlocks shared mailboxes.
@@ -67,6 +70,7 @@ async function updateLicenseFromPaymug(
 	instanceUrl: string,
 	requestedPlan?: Exclude<LicensePlan, "community">,
 ): Promise<LicenseStatus> {
+	if (LOCAL_FEATURES_ENABLED) return getLocalLicenseStatus();
 	const settings = await getOrCreateLicenseSettings(env);
 	const licenseKeyHash = licenseKey ? await hashLicenseKey(licenseKey) : null;
 	if (action === "validate" && (!licenseKeyHash || settings.licenseKeyHash !== licenseKeyHash)) {

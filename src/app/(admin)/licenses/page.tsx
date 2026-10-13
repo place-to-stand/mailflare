@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { LOCAL_FEATURES_ENABLED } from "@/lib/licenses/fork-policy";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { Check, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +15,7 @@ import { LicenseActivation } from "./license-activation";
 import { LICENSE_PLANS } from "./utils";
 
 export default async function LicensesPage() {
+  if (LOCAL_FEATURES_ENABLED) redirect("/admin");
   const t = await getServerTranslator();
   return (
     <div className="space-y-6">

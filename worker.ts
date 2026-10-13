@@ -30,6 +30,7 @@ import { runAccountRetention } from "./src/lib/accounts/deletion";
 import { runJmapChangeRetention } from "./src/lib/jmap/changes";
 import { runFollowUpReminders } from "./src/lib/follow-ups/service";
 import { runCalendarReminders } from "./src/lib/calendar/reminders";
+import { applyPendingMigrationsIfInitialized } from "./src/lib/migrations/service";
 export { RealtimeHub } from "./src/lib/realtime/hub";
 
 export default {
@@ -143,6 +144,8 @@ export default {
 
 	async scheduled(controller: ScheduledController, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
 		const env = withDatabase(withStorage(rawEnv));
+		// Workers Builds only deploys; the cron applies the migrations a release brings.
+		ctx.waitUntil(applyPendingMigrationsIfInitialized(env.DB));
 		if (controller.cron === "0 2 * * *") ctx.waitUntil(runScheduledDatabaseBackup(env, new Date(controller.scheduledTime)));
 		ctx.waitUntil(runAgentMaintenance(env));
 		ctx.waitUntil(runTrashRetention(env, new Date(controller.scheduledTime)));

@@ -58,3 +58,18 @@ export async function applyPendingMigrations(db: D1Database): Promise<MigrationR
 
 	return { ...(await getMigrationStatus(db)), applied };
 }
+
+/**
+ * Apply migrations a new deploy brought with it. Runs from the five-minute
+ * cron, so a release is migrated within minutes of Workers Builds deploying it.
+ * An uninitialized database is left alone: the first migration belongs to the
+ * token-gated /setup flow, not to a scheduled job.
+ */
+export async function applyPendingMigrationsIfInitialized(db: D1Database): Promise<string[]> {
+	if ((await getAppliedMigrationNames(db)).length === 0) return [];
+	const status = await getMigrationStatus(db);
+	if (status.pending.length === 0) return [];
+	const result = await applyPendingMigrations(db);
+	console.log(`Applied database migrations: ${result.applied.join(", ")}`);
+	return result.applied;
+}

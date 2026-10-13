@@ -22,6 +22,7 @@ import { processAgentDraftJob } from "./src/lib/agent/jobs/utils";
 import { runAgentMaintenance } from "./src/lib/agent/maintenance";
 import { runTrashRetention } from "./src/lib/email/trash-retention";
 import { runDriveTrashRetention } from "./src/lib/drive/retention";
+import { applyPendingMigrationsIfInitialized } from "./src/lib/migrations/service";
 export { RealtimeHub } from "./src/lib/realtime/hub";
 
 export default {
@@ -129,6 +130,8 @@ export default {
 
 	async scheduled(controller: ScheduledController, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
 		const env = withStorage(rawEnv);
+		// Workers Builds only deploys; the cron applies the migrations a release brings.
+		ctx.waitUntil(applyPendingMigrationsIfInitialized(env.DB));
 		if (controller.cron === "0 2 * * *") ctx.waitUntil(runScheduledDatabaseBackup(env, new Date(controller.scheduledTime)));
 		ctx.waitUntil(runAgentMaintenance(env));
 		ctx.waitUntil(runTrashRetention(env, new Date(controller.scheduledTime)));

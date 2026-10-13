@@ -1,8 +1,10 @@
+import { LOCAL_FEATURES_ENABLED } from "@/lib/licenses/fork-policy";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
 import { licenseSettings } from "@/db/schema";
 
 export async function isTeamMailboxSharingEnabled(db: AppDatabase): Promise<boolean> {
+	if (LOCAL_FEATURES_ENABLED) return true;
 	try {
 		const [license] = await db
 			.select({ plan: licenseSettings.plan, state: licenseSettings.state })

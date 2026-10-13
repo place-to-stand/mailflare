@@ -24,6 +24,7 @@ await build({
 			export { POST as register } from "./src/app/api/auth/register/route.ts";
 			export { POST as setupDomain } from "./src/app/api/setup/domain/route.ts";
 			export { POST as setupPrepare } from "./src/app/api/setup/prepare/route.ts";
+			export { createMailflareMcpHandler } from "./src/lib/mcp/server.ts";
 		`,
 		resolveDir: root,
 		sourcefile: "security-hardening-test-entry.ts",
@@ -35,13 +36,18 @@ await build({
 	target: "node24",
 	tsconfig: join(root, "tsconfig.json"),
 	packages: "external",
-	alias: { "next/headers": "next/headers.js", "next/server": "next/server.js", "cloudflare:workers": "./server/runtime/cloudflare-workers.ts" },
+	alias: {
+		"next/headers": "next/headers.js",
+		"next/server": "next/server.js",
+		"cloudflare:workers": "./server/runtime/cloudflare-workers.ts",
+		"@modelcontextprotocol/server": "./tests/stubs/mcp-server.mjs",
+	},
 	logLevel: "silent",
 });
 const {
 	SqliteDatabase, applyMigrations, createSession, SETUP_TOKEN_HEADER,
 	createAlias, deleteAlias, createDomainRule, updateDomainRule, deleteDomainRule,
-	register, setupDomain, setupPrepare,
+	register, setupDomain, setupPrepare, createMailflareMcpHandler,
 } = await import(pathToFileURL(join(directory, "entry.mjs")).href);
 
 async function fixture(t, { withUsers = true, env: extraEnv = {} } = {}) {
@@ -188,4 +194,49 @@ test("the operator's token opens first-run setup", async (t) => {
 	// Past the gate: the zone lookup runs (and finds nothing in this mock).
 	assert.notEqual(response.status, 403);
 	assert.ok(f.calls.some((call) => call.path === "/client/v4/zones"));
+});
+
+async function scheduledSendFixture(t) {
+	const f = await fixture(t);
+	f.database.db.exec(`
+		INSERT INTO users (id, email, password_hash, name, role, is_primary_admin, created_at) VALUES
+			('reader', 'reader@one.test', 'hash', 'Reader', 'user', 0, 1),
+			('sender', 'sender@one.test', 'hash', 'Sender', 'user', 0, 1);
+		INSERT INTO license_settings (id, instance_id, plan, state, features, updated_at)
+			VALUES ('default', 'test-instance', 'team', 'active', '[]', 1);
+		INSERT INTO mailboxes (id, user_id, domain_id, local_part, type, use_all_domains, created_at)
+			VALUES ('team-mbx', 'admin', 'one', 'team', 'shared', 0, 1);
+		INSERT INTO mailbox_access (id, mailbox_id, user_id, permission, created_at) VALUES
+			('acc-reader', 'team-mbx', 'reader', 'read_only', 1),
+			('acc-sender', 'team-mbx', 'sender', 'send_as', 1);
+		INSERT INTO messages (id, user_id, mailbox_id, direction, from_addr, to_addr, status, created_at)
+			VALUES ('scheduled', 'admin', 'team-mbx', 'outbound', 'team@one.test', 'client@example.test', 'queued', 1);
+		INSERT INTO outbound_jobs (id, user_id, message_id, status, payload, scheduled_at, created_at, updated_at)
+			VALUES ('job', 'admin', 'scheduled', 'queued', '{}', 4102444800, 1, 1);
+	`);
+	const cancel = (userId) => {
+		const user = f.database.db.prepare("SELECT id, role FROM users WHERE id = ?").get(userId);
+		const principal = { keyId: `key-${userId}`, user, scopes: ["mcp:read", "mcp:draft"], mailboxIds: ["team-mbx"] };
+		const server = createMailflareMcpHandler(globalThis.__mailflareNodeEnv, principal, "https://mailflare.test", "Bearer test")();
+		return server.tools.get("cancel_scheduled_send")({ mailboxId: "team-mbx", messageId: "scheduled" });
+	};
+	const state = () => ({
+		jobs: f.count("SELECT COUNT(*) AS n FROM outbound_jobs WHERE message_id = 'scheduled'"),
+		status: f.database.db.prepare("SELECT status FROM messages WHERE id = 'scheduled'").get().status,
+	});
+	return { cancel, state };
+}
+
+test("an MCP key that can only read a mailbox cannot cancel its scheduled sends", async (t) => {
+	const s = await scheduledSendFixture(t);
+	const result = await s.cancel("reader");
+	assert.equal(result.isError, true);
+	assert.deepEqual(s.state(), { jobs: 1, status: "queued" });
+});
+
+test("an MCP key whose user can send from the mailbox can cancel a scheduled send", async (t) => {
+	const s = await scheduledSendFixture(t);
+	const result = await s.cancel("sender");
+	assert.equal(result.isError, false);
+	assert.deepEqual(s.state(), { jobs: 0, status: "draft" });
 });

@@ -150,6 +150,31 @@ To add a language, create `public/locales/<code>.json` with the same keys as `sr
 - [Email assistant and MCP](docs/email-assistant-and-mcp.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
+## Fork updates
+
+This fork grants all features locally without paid keys or account seat limits.
+The AGPL source license still applies. Upstream licensing interfaces, translations,
+and database schema remain intact to reduce conflicts when updating.
+`src/lib/licenses/fork-policy.ts` owns the local policy; the license service and
+mailbox sharing helper use it before checking persisted settings or Paymug.
+The purchase page redirects to admin settings and its navigation links are hidden.
+
+Commit this fork patch before updating, and start each update with a clean working tree.
+For weekly updates, merge upstream on a separate branch and run:
+
+```sh
+git fetch upstream
+git switch -c update/upstream-YYYY-MM-DD
+git merge upstream/main
+node --test tests/fork-policy.test.mjs tests/account-alias-selection.test.mjs tests/security-hardening.test.mjs
+git diff --check
+```
+
+Use upstream's default branch if it differs from `main`. Review any new licensing
+or entitlement checks before merging the update into your normal branch. Keep the
+local policy hooks when resolving conflicts. The tests cover current features;
+new upstream feature gates may require new hooks and tests.
+
 ## License
 
 See [LICENSE](LICENSE).

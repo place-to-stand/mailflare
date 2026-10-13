@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BadgeDollarSign, Bot, Globe2, KeyRound, Mail, Palette, Users } from "lucide-react";
+import { Bot, Globe2, KeyRound, Mail, Palette, Users } from "lucide-react";
 import { useLanguage } from "@/components/language-provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { AdminUpdateCard } from "@/components/admin-update-card";
@@ -45,16 +45,9 @@ const sections: AdminSection[] = [
 		permission: "primary",
 	},
 	{
-		href: "/licenses",
-		titleKey: "admin.nav.licenses",
-		descriptionKey: "admin.section.licenses",
-		icon: BadgeDollarSign,
-		permission: "primary",
-	},
-	{
 		href: "/accounts",
 		titleKey: "admin.nav.accounts",
-		descriptionKey: "admin.section.accounts",
+		descriptionKey: "accounts.description",
 		icon: Users,
 	},
 	{

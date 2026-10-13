@@ -16,6 +16,11 @@ await build({
 		contents: `
 			export { SqliteDatabase } from "./server/runtime/sqlite-database.ts";
 			export { applyMigrations } from "./server/runtime/migrate.ts";
+			export { getDb } from "./src/db/index.ts";
+			export { getMailboxAccessLevel, listAccessibleMailboxIds } from "./src/lib/mailboxes/access.ts";
+			export { getMailboxNotificationUserIds } from "./src/lib/realtime/utils.ts";
+			export { getBranding, updateBranding } from "./src/lib/branding/service.ts";
+			export { PATCH as updateForwarding } from "./src/app/api/settings/forwarding/route.ts";
 			export { createSession } from "./src/lib/auth/session.ts";
 			export { SETUP_TOKEN_HEADER } from "./src/lib/auth/setup-token-utils.ts";
 			export { POST as createAlias, DELETE as deleteAlias } from "./src/app/api/mailboxes/[id]/aliases/route.ts";
@@ -48,6 +53,7 @@ const {
 	SqliteDatabase, applyMigrations, createSession, SETUP_TOKEN_HEADER,
 	createAlias, deleteAlias, createDomainRule, updateDomainRule, deleteDomainRule,
 	register, setupDomain, setupPrepare, createMailflareMcpHandler,
+	getDb, getMailboxAccessLevel, listAccessibleMailboxIds, getMailboxNotificationUserIds, getBranding, updateBranding, updateForwarding,
 } = await import(pathToFileURL(join(directory, "entry.mjs")).href);
 
 async function fixture(t, { withUsers = true, env: extraEnv = {} } = {}) {
@@ -202,8 +208,6 @@ async function scheduledSendFixture(t) {
 		INSERT INTO users (id, email, password_hash, name, role, is_primary_admin, created_at) VALUES
 			('reader', 'reader@one.test', 'hash', 'Reader', 'user', 0, 1),
 			('sender', 'sender@one.test', 'hash', 'Sender', 'user', 0, 1);
-		INSERT INTO license_settings (id, instance_id, plan, state, features, updated_at)
-			VALUES ('default', 'test-instance', 'team', 'active', '[]', 1);
 		INSERT INTO mailboxes (id, user_id, domain_id, local_part, type, use_all_domains, created_at)
 			VALUES ('team-mbx', 'admin', 'one', 'team', 'shared', 0, 1);
 		INSERT INTO mailbox_access (id, mailbox_id, user_id, permission, created_at) VALUES
@@ -239,4 +243,37 @@ test("an MCP key whose user can send from the mailbox can cancel a scheduled sen
 	const result = await s.cancel("sender");
 	assert.equal(result.isError, false);
 	assert.deepEqual(s.state(), { jobs: 0, status: "draft" });
+});
+
+
+test("shared inbox permissions and notifications work without a license", async (t) => {
+	const f = await fixture(t);
+	f.database.db.exec(`
+		INSERT INTO mailboxes (id, user_id, domain_id, local_part, type, use_all_domains, created_at)
+			VALUES ('shared', 'admin', 'one', 'support', 'shared', 0, 1);
+		INSERT INTO mailbox_access (id, mailbox_id, user_id, permission, created_at)
+			VALUES ('access', 'shared', 'staff', 'read_only', 1);
+	`);
+	const env = globalThis.__mailflareNodeEnv;
+	const db = getDb(env);
+	const staff = { id: "staff", email: "staff@one.test", role: "user" };
+	const access = await getMailboxAccessLevel(db, staff, "shared");
+	assert.equal(access.canRead, true);
+	assert.equal(access.canSendAs, false);
+	assert.equal(access.canManage, false);
+	assert.equal(await getMailboxAccessLevel(db, { id: "outsider", role: "user" }, "shared"), null);
+	assert.ok((await listAccessibleMailboxIds(db, staff)).includes("shared"));
+	assert.ok((await getMailboxNotificationUserIds(env, "shared", "admin")).includes("staff"));
+});
+
+test("branding and forwarding work without a license", async (t) => {
+	const f = await fixture(t);
+	const env = globalThis.__mailflareNodeEnv;
+	assert.equal((await updateBranding(env, { appName: "My Mail" })).appName, "My Mail");
+	assert.equal((await getBranding(env)).appName, "My Mail");
+	const response = await updateForwarding(f.request("/api/settings/forwarding", {
+		as: "staff", method: "PATCH", body: { forwardingEmail: "forward@example.com" },
+	}));
+	assert.equal(response.status, 200);
+	assert.equal(f.database.db.prepare("SELECT forwarding_email FROM users WHERE id = 'staff'").get().forwarding_email, "forward@example.com");
 });

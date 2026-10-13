@@ -3,7 +3,7 @@ import type { AdminApiKeyScope } from "@/lib/api/scopes-types";
 
 export const ADMIN_KEY_PERMISSIONS: { value: AdminApiKeyScope; labelKey: TranslationKey; descriptionKey: TranslationKey }[] = [
 	{ value: "domains", labelKey: "adminKeys.perm.domains", descriptionKey: "adminKeys.perm.domainsDesc" },
-	{ value: "accounts", labelKey: "adminKeys.perm.accounts", descriptionKey: "adminKeys.perm.accountsDesc" },
+	{ value: "accounts", labelKey: "adminKeys.perm.accounts", descriptionKey: "adminKeys.perm.accounts" },
 	{ value: "mailboxes", labelKey: "adminKeys.perm.mailboxes", descriptionKey: "adminKeys.perm.mailboxesDesc" },
 	{ value: "storage", labelKey: "adminKeys.perm.storage", descriptionKey: "adminKeys.perm.storageDesc" },
 ];

@@ -9,7 +9,7 @@ import { authFetch } from "@/lib/auth/client";
 import { cn } from "@/lib/utils";
 import { getUserTimeZone } from "@/lib/time/utils";
 import { textToHtml } from "./rich-text-utils";
-import { formatDateTimeLocal, formatScheduledSend, getScheduleSendOptions, parseDateTimeLocal } from "./schedule-send-utils";
+import { formatDateTimeLocal, formatScheduledSend, getScheduleSendOptions, isPastSchedule, parseDateTimeLocal } from "./schedule-send-utils";
 import type { ScheduleSendSheetProps } from "./schedule-send-types";
 import type { ComposeTemplate } from "./template-types";
 
@@ -53,8 +53,9 @@ export function ScheduleSendSheet({ open, onOpenChange, value, onChange, onApply
 	}, [open]);
 
 	const options = getScheduleSendOptions();
-	const minimum = formatDateTimeLocal(new Date(Date.now() + 5 * 60 * 1000));
+	const minimum = formatDateTimeLocal(new Date());
 	const parsedDate = parseDateTimeLocal(draftDate);
+	const pastDate = parsedDate !== null && isPastSchedule(parsedDate);
 	const title = page === "date" ? t("schedule.pick", { timeZone: getUserTimeZone() }) : page === "templates" ? t("template.menu") : t("schedule.heading");
 
 	function choose(date: Date | null) {
@@ -120,11 +121,14 @@ export function ScheduleSendSheet({ open, onOpenChange, value, onChange, onApply
 										value={draftDate}
 										onChange={(event) => setDraftDate(event.target.value)}
 										aria-label={t("schedule.pick", { timeZone: getUserTimeZone() })}
+										aria-invalid={pastDate}
+										aria-describedby={pastDate ? "schedule-past-time" : undefined}
 										className="h-12 w-full rounded-xl border border-neutral-200 px-3 text-base outline-none focus:border-blue-400"
 									/>
+									{pastDate && <p id="schedule-past-time" role="alert" className="mt-2 text-sm text-red-600">{t("schedule.pastTime")}</p>}
 								</div>
 								<div className="shrink-0 px-2 pt-4">
-									<Button type="button" className="h-12 w-full rounded-xl text-base" disabled={!parsedDate} onClick={() => choose(parsedDate)}>
+									<Button type="button" className="h-12 w-full rounded-xl text-base" disabled={!parsedDate || pastDate} onClick={() => choose(parsedDate)}>
 										{t("schedule.heading")}
 									</Button>
 								</div>

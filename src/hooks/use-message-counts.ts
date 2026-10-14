@@ -64,7 +64,7 @@ export function useMessageCounts(mailboxId?: string | null, enabled = true) {
 					...current.folders,
 					inbox: {
 						...current.folders.inbox,
-						unread: Math.max(0, current.folders.inbox.unread + detail.inboxUnreadDelta),
+						unread: Math.max(0, current.folders.inbox.unread + (detail.inboxUnreadDelta ?? 0)),
 					},
 				},
 			}));

@@ -264,7 +264,7 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 								<div className="flex items-center gap-2">
 									<Label htmlFor="rule-value">{t("routing.matchValue")}</Label>
 									<Tooltip label={t("routing.matchAllHint")}>
-										<span className="text-neutral-500"><Info className="h-4 w-4" /></span>
+										<button type="button" aria-label={t("routing.matchAllHint")} className="text-neutral-500"><Info className="h-4 w-4" /></button>
 									</Tooltip>
 								</div>
 								<Input
@@ -279,7 +279,7 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 								<div className="flex items-center gap-2">
 									<Label htmlFor="rule-priority">{t("routing.priority")}</Label>
 									<Tooltip label={t("routing.priorityHint")}>
-										<span className="text-neutral-500"><Info className="h-4 w-4" /></span>
+										<button type="button" aria-label={t("routing.priorityHint")} className="text-neutral-500"><Info className="h-4 w-4" /></button>
 									</Tooltip>
 								</div>
 								<Input
@@ -334,13 +334,14 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 									<div className="flex items-center gap-2">
 										<p className="text-sm font-medium">{t("routing.keepCopy")}</p>
 										<Tooltip label={t("routing.keepCopyHint")}>
-											<span className="text-neutral-500"><Info className="h-4 w-4" /></span>
+											<button type="button" aria-label={t("routing.keepCopyHint")} className="text-neutral-500"><Info className="h-4 w-4" /></button>
 										</Tooltip>
 									</div>
 								</div>
 								<Switch
 									checked={form.keepCopy}
 									onCheckedChange={(keepCopy) => setForm({ ...form, keepCopy })}
+									aria-label={t("routing.keepCopy")}
 								/>
 							</div>
 						)}
@@ -402,7 +403,7 @@ function RuleSection({
 				<div className="flex items-center gap-2">
 					<CardTitle className="text-xs uppercase">{title}</CardTitle>
 					<Tooltip label={description}>
-						<span className="text-neutral-500"><Info className="h-4 w-4" /></span>
+						<button type="button" aria-label={description} className="text-neutral-500"><Info className="h-4 w-4" /></button>
 					</Tooltip>
 				</div>
 			</CardHeader>
@@ -412,6 +413,7 @@ function RuleSection({
 				) : (
 					rules.map((rule) => {
 						const Icon = ACTION_ICONS[rule.action];
+						const ruleName = rule.name || describeRule(rule, mailboxes, hostname, t);
 						return (
 							<div
 								key={rule.id}
@@ -421,7 +423,7 @@ function RuleSection({
 								<div className="min-w-0 flex-1">
 									<div className="flex items-center gap-2">
 										<p className="truncate text-sm font-medium">
-											{rule.name || describeRule(rule, mailboxes, hostname, t)}
+											{ruleName}
 										</p>
 										{!rule.enabled && <Badge variant="secondary">{t("routing.disabled")}</Badge>}
 									</div>
@@ -434,11 +436,11 @@ function RuleSection({
 										{t("routing.stats", { priority: rule.priority, count: rule.matchCount, last: formatLastMatched(rule.lastMatchedAt, t) })}
 									</p>
 								</div>
-								<Switch checked={rule.enabled} onCheckedChange={() => onToggle(rule)} />
-								<Button variant="ghost" size="sm" onClick={() => onEdit(rule)}>
+								<Switch checked={rule.enabled} onCheckedChange={() => onToggle(rule)} aria-label={`${t("routing.enableRule")}: ${ruleName}`} />
+								<Button variant="ghost" size="sm" onClick={() => onEdit(rule)} aria-label={`${t("routing.editRule")}: ${ruleName}`}>
 									<Pencil className="h-4 w-4" />
 								</Button>
-								<Button variant="ghost" size="sm" onClick={() => onDelete(rule.id)}>
+								<Button variant="ghost" size="sm" onClick={() => onDelete(rule.id)} aria-label={`${t("rules.delete")}: ${ruleName}`}>
 									<Trash2 className="h-4 w-4 text-red-600" />
 								</Button>
 							</div>

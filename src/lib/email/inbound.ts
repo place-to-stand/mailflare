@@ -182,6 +182,7 @@ export async function processInboundMessage(
 			fromAddr,
 			toAddr,
 			ccAddr: parsed.ccAddr,
+			replyTo: parsed.replyTo,
 			subject: parsed.subject,
 			snippet,
 			textBody: parsed.text,

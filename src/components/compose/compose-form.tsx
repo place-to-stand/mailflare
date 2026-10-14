@@ -23,6 +23,7 @@ import { buildSendFormData, fetchDraft, formatAttachmentSize } from "./utils";
 import { RecipientInput } from "./recipient-input";
 import { RichTextEditor } from "./rich-text-editor";
 import { ScheduleSendMenu } from "./schedule-send-menu";
+import { isPastSchedule } from "./schedule-send-utils";
 import {
 	applyMailboxSignatureHtml,
 	hasMeaningfulHtml,
@@ -108,6 +109,10 @@ export function ComposeForm({
 	const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const pendingSave = useRef<(() => Promise<void>) | null>(null);
 	const draftGeneration = useRef(0);
+	const draftIdRef = useRef<string | null>(null);
+	const saveQueue = useRef<Promise<void>>(Promise.resolve());
+	const uploadedFiles = useRef(new WeakSet<File>());
+	const rejectedFiles = useRef(new WeakSet<File>());
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
 	const fileDragDepth = useRef(0);
 	const previousSignature = useRef("");
@@ -166,6 +171,7 @@ export function ComposeForm({
 			.then((draft) => {
 				if (cancelled) return;
 
+				draftIdRef.current = draft.id;
 				setDraftId(draft.id);
 				setAgentRevision(draft.agent?.revision ?? null);
 				setScheduledAt(draft.agent?.scheduledAt ? new Date(draft.agent.scheduledAt) : null);
@@ -236,38 +242,58 @@ export function ComposeForm({
 		const bodyContent = htmlToPlainText(html).trim();
 		const signatureOnly = bodyContent === (selectedMailbox?.signature?.trim() ?? "");
 		const hasContent =
-			to.length > 0 || cc.length > 0 || bcc.length > 0 || subject.trim() || quotedHtml || (bodyContent && !signatureOnly);
+			to.length > 0 || cc.length > 0 || bcc.length > 0 || subject.trim() || quotedHtml || attachments.length > 0 || (bodyContent && !signatureOnly);
 		if (!fromAddr || !hasContent || loadingDraft) return;
 		if (saveTimer.current) clearTimeout(saveTimer.current);
 
 		const generation = draftGeneration.current;
-		const save = async () => {
-			const payload = {
-				mailboxId: selectedMailbox?.id,
-				from: fromAddr,
-				to: recipientsToHeader(to),
-				cc: recipientsToHeader(cc),
-				bcc: recipientsToHeader(bcc),
-				subject,
-				html: joinQuotedHtml(html, quotedHtml),
-				text: htmlToPlainText(joinQuotedHtml(html, quotedHtml)),
-				inReplyTo: threading?.inReplyTo ?? null,
-				references: threading?.references ?? null,
-				threadId: threading?.threadId ?? null,
-			};
-			const res = await authFetch(draftId ? `/api/drafts/${draftId}` : "/api/drafts", {
-				method: draftId ? "PATCH" : "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload),
-			});
-			const data = (await res.json()) as { draft?: { id: string } };
-			if (res.ok && data.draft?.id) {
+		const save = () => {
+			const run = saveQueue.current.then(async () => {
+				if (generation !== draftGeneration.current) return;
+				const payload = {
+					mailboxId: selectedMailbox?.id,
+					from: fromAddr,
+					to: recipientsToHeader(to),
+					cc: recipientsToHeader(cc),
+					bcc: recipientsToHeader(bcc),
+					subject,
+					html: joinQuotedHtml(html, quotedHtml),
+					text: htmlToPlainText(joinQuotedHtml(html, quotedHtml)),
+					inReplyTo: threading?.inReplyTo ?? null,
+					references: threading?.references ?? null,
+					threadId: threading?.threadId ?? null,
+				};
+				const existingId = draftIdRef.current;
+				const res = await authFetch(existingId ? `/api/drafts/${existingId}` : "/api/drafts", {
+					method: existingId ? "PATCH" : "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(payload),
+				});
+				const data = (await res.json()) as { draft?: { id: string } };
+				if (!res.ok || !data.draft?.id) return;
 				if (generation !== draftGeneration.current) {
-					void authFetch(`/api/drafts/${data.draft.id}`, { method: "DELETE" });
+					if (!existingId) void authFetch(`/api/drafts/${data.draft.id}`, { method: "DELETE" });
 					return;
 				}
+				draftIdRef.current = data.draft.id;
 				setDraftId(data.draft.id);
-			}
+				const pending = attachments.filter((attachment) => !uploadedFiles.current.has(attachment.file) && !rejectedFiles.current.has(attachment.file));
+				if (agentRevision !== null || pending.length === 0) return;
+				const form = new FormData();
+				for (const attachment of pending) form.append("attachments", attachment.file);
+				const uploaded = await authFetch(`/api/drafts/${data.draft.id}/attachments`, { method: "POST", body: form });
+				const result = (await uploaded.json()) as { attachments?: ComposeStoredAttachment[]; error?: string };
+				if (!uploaded.ok) {
+					for (const attachment of pending) rejectedFiles.current.add(attachment.file);
+					setToast({ type: "error", message: result.error || t("compose.error.draftAttachments") });
+					return;
+				}
+				for (const attachment of pending) uploadedFiles.current.add(attachment.file);
+				setStoredAttachments((current) => [...current, ...(result.attachments ?? [])]);
+				setAttachments((current) => current.filter((attachment) => !uploadedFiles.current.has(attachment.file)));
+			}).catch(() => {});
+			saveQueue.current = run;
+			return run;
 		};
 		pendingSave.current = save;
 		saveTimer.current = setTimeout(() => {
@@ -278,7 +304,7 @@ export function ComposeForm({
 		return () => {
 			if (saveTimer.current) clearTimeout(saveTimer.current);
 		};
-	}, [bcc, cc, draftId, fromAddr, html, loadingDraft, quotedHtml, selectedMailbox?.id, selectedMailbox?.signature, subject, threading, to]);
+	}, [agentRevision, attachments, bcc, cc, fromAddr, html, loadingDraft, quotedHtml, selectedMailbox?.id, selectedMailbox?.signature, subject, threading, to]);
 
 	useEffect(() => {
 		if (!draftIdToLoad || loadingDraft) return;
@@ -300,9 +326,16 @@ export function ComposeForm({
 			setToast({ type: "error", message: t("compose.error.emptyBody") });
 			return;
 		}
+		if (scheduledAt && isPastSchedule(scheduledAt)) {
+			setToast({ type: "error", message: t("schedule.pastTime") });
+			return;
+		}
 		if (saveTimer.current) clearTimeout(saveTimer.current);
 		pendingSave.current = null;
 		setLoading(true);
+		await saveQueue.current;
+		const currentDraftId = draftIdRef.current;
+		const unsentAttachments = attachments.filter((attachment) => !uploadedFiles.current.has(attachment.file));
 		const fullHtml = joinQuotedHtml(html, quotedHtml);
 		if (draftId && agentRevision !== null) {
 			try {
@@ -335,7 +368,7 @@ export function ComposeForm({
 			res = await authFetch("/api/send", {
 				method: "POST",
 				body: buildSendFormData({
-					attachments,
+					attachments: unsentAttachments,
 					from: fromAddr,
 					to: recipientsToHeader(to),
 					cc: recipientsToHeader(cc),
@@ -362,12 +395,13 @@ export function ComposeForm({
 			return;
 		}
 
-		if (draftId) {
-			void authFetch(`/api/drafts/${draftId}`, { method: "DELETE" }).finally(() => {
+		if (currentDraftId) {
+			void authFetch(`/api/drafts/${currentDraftId}`, { method: "DELETE" }).finally(() => {
 				window.dispatchEvent(new Event("mailflare:messages-changed"));
 			});
 		}
 		draftGeneration.current += 1;
+		draftIdRef.current = null;
 		setDraftId(null);
 		setTo([]);
 		setCc([]);
@@ -396,11 +430,12 @@ export function ComposeForm({
 		pendingSave.current = null;
 		draftGeneration.current += 1;
 		setDeletingDraft(true);
+		await saveQueue.current;
 
-		if (draftId) {
+		if (draftIdRef.current) {
 			let deleted = false;
 			try {
-				const res = await authFetch(`/api/drafts/${draftId}`, { method: "DELETE" });
+				const res = await authFetch(`/api/drafts/${draftIdRef.current}`, { method: "DELETE" });
 				deleted = res.ok || res.status === 404;
 			} catch {
 				deleted = false;
@@ -412,6 +447,7 @@ export function ComposeForm({
 			}
 		}
 
+		draftIdRef.current = null;
 		setDraftId(null);
 		setTo([]);
 		setCc([]);
@@ -436,8 +472,9 @@ export function ComposeForm({
 	}
 
 	async function removeStoredAttachment(attachmentId: string) {
-		if (!draftId) return;
-		const res = await authFetch(`/api/drafts/${draftId}/attachments/${attachmentId}`, { method: "DELETE" });
+		const currentDraftId = draftIdRef.current;
+		if (!currentDraftId) return;
+		const res = await authFetch(`/api/drafts/${currentDraftId}/attachments/${attachmentId}`, { method: "DELETE" });
 		if (!res.ok) {
 			setToast({ type: "error", message: t("compose.error.removeAttachment") });
 			return;

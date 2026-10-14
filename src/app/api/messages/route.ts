@@ -105,6 +105,9 @@ export async function GET(request: Request) {
 	// Which stored messages each visible row stands for, so acting on a
 	// conversation row acts on the whole conversation within this folder.
 	const threadMessageIds = new Map<string, string[]>();
+	// Unread messages per conversation within this folder; the row's unread state
+	// has to match what marking it read will actually change.
+	const scopedThreadCounts = new Map<string, { total: number; unread: number }>();
 	if (groupByThread) {
 		const page = await loadConversationPage({ db, where, offset, limit });
 		total = page.total;
@@ -116,13 +119,17 @@ export async function GET(request: Request) {
 		const keys = rows.map((row) => row.threadId ?? row.id);
 		if (keys.length > 0) {
 			const members = await db
-				.select({ id: messages.id, key: threadKey })
+				.select({ id: messages.id, key: threadKey, read: messages.read })
 				.from(messages)
 				.where(and(where, inArray(threadKey, keys)));
 			for (const member of members) {
 				const list = threadMessageIds.get(member.key) ?? [];
 				list.push(member.id);
 				threadMessageIds.set(member.key, list);
+				const counts = scopedThreadCounts.get(member.key) ?? { total: 0, unread: 0 };
+				counts.total += 1;
+				if (!member.read) counts.unread += 1;
+				scopedThreadCounts.set(member.key, counts);
 			}
 		}
 	} else {
@@ -195,6 +202,8 @@ export async function GET(request: Request) {
 	// reading pane loads them from /api/messages/[id]/thread, so they are
 	// neither selected nor sent here.
 	const enrichedRows = rows.map(({ rawR2Key: _rawR2Key, ...message }) => {
+		const threadStats = message.threadId ? threadCounts.get(message.threadId) : undefined;
+		const folderUnread = scopedThreadCounts.get(message.threadId ?? message.id)?.unread;
 		const contactMap = contactMapsByUserId.get(message.userId);
 		const accountName = message.mailboxId ? mailboxNameMap.get(message.mailboxId) : null;
 		return {
@@ -206,8 +215,8 @@ export async function GET(request: Request) {
 				contactMap?.get(normalizeEmailAddress(message.fromAddr)) ??
 				null,
 			toContactName: contactMap?.get(normalizeEmailAddress(getFirstEmailAddressEntry(message.toAddr))) ?? null,
-			threadCount: (message.threadId && threadCounts.get(message.threadId)?.total) || 1,
-			threadUnread: (message.threadId && threadCounts.get(message.threadId)?.unread) || 0,
+			threadCount: threadStats?.total || 1,
+			threadUnread: (groupByThread ? folderUnread : threadStats?.unread) || 0,
 			...(groupByThread
 				? { threadMessageIds: threadMessageIds.get(message.threadId ?? message.id) ?? [message.id] }
 				: {}),

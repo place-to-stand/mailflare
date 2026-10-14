@@ -10,6 +10,7 @@ import {
 	formatDateTimeLocal,
 	formatScheduledSend,
 	getScheduleSendOptions,
+	isPastSchedule,
 	parseDateTimeLocal,
 } from "./schedule-send-utils";
 import type { ScheduleSendMenuProps } from "./schedule-send-types";
@@ -22,8 +23,17 @@ export function ScheduleSendMenu({ disabled, value, onChange, mailboxId, from, o
 	const [newTemplateOpen, setNewTemplateOpen] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const isPhone = useIsMobile();
+	const [pickedText, setPickedText] = useState<string | null>(null);
 	const options = getScheduleSendOptions();
-	const minimum = new Date(Date.now() + 5 * 60 * 1000);
+	const picked = pickedText === null ? null : parseDateTimeLocal(pickedText);
+	const pastPicked = picked !== null && isPastSchedule(picked);
+
+	function pick(text: string) {
+		const parsed = parseDateTimeLocal(text);
+		setPickedText(text);
+		if (!parsed) onChange(null);
+		else if (!isPastSchedule(parsed)) onChange(parsed);
+	}
 
 	if (isPhone) {
 		return (
@@ -39,7 +49,7 @@ export function ScheduleSendMenu({ disabled, value, onChange, mailboxId, from, o
 
 	return (
 		<>
-		<DropdownMenu.Root>
+		<DropdownMenu.Root onOpenChange={() => setPickedText(null)}>
 			<DropdownMenu.Trigger
 				type="button"
 				disabled={disabled}
@@ -87,12 +97,15 @@ export function ScheduleSendMenu({ disabled, value, onChange, mailboxId, from, o
 					</DropdownMenu.Label>
 					<input
 						type="datetime-local"
-						min={formatDateTimeLocal(minimum)}
-						value={value ? formatDateTimeLocal(value) : ""}
-						onChange={(event) => onChange(parseDateTimeLocal(event.target.value))}
+						min={formatDateTimeLocal(new Date())}
+						value={pickedText ?? (value ? formatDateTimeLocal(value) : "")}
+						onChange={(event) => pick(event.target.value)}
 						onKeyDown={(event) => event.stopPropagation()}
+						aria-invalid={pastPicked}
+						aria-describedby={pastPicked ? "schedule-past-time" : undefined}
 						className="mx-2 mb-2 h-9 rounded-md border border-neutral-200 px-2 text-sm outline-none focus:border-blue-400"
 					/>
+					{pastPicked && <p id="schedule-past-time" role="alert" className="mx-2 mb-2 text-xs text-red-600">{t("schedule.pastTime")}</p>}
 				</DropdownMenu.Content>
 			</DropdownMenu.Portal>
 		</DropdownMenu.Root>

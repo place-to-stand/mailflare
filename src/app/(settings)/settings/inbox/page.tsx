@@ -1,6 +1,7 @@
 import { getServerTranslator } from "@/lib/i18n/server";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { InboxThreadingSettings } from "@/components/settings/inbox-threading-settings";
+import { RemoteContentSettings } from "@/components/settings/remote-content-settings";
 import { RecipientAddressSettings } from "@/components/settings/recipient-address-settings";
 import { InboxReadingLayoutSettings } from "@/components/settings/inbox-reading-layout-settings";
 import { InboxShortcutsSettings } from "@/components/settings/inbox-shortcuts-settings";
@@ -80,6 +81,13 @@ export default async function SettingsInboxPage() {
 							<p className="mt-1 text-sm text-neutral-500">{t("settingsPage.inbox.spamProtectionDescription")}</p>
 						</div>
 						<SpamFilterSettings />
+					</div>
+					<div className="py-6 first:pt-0 last:pb-0">
+						<div className="mb-4">
+							<h3 className="text-base font-semibold text-neutral-900">{t("settingsPage.inbox.remoteContent")}</h3>
+							<p className="mt-1 text-sm text-neutral-500">{t("settingsPage.inbox.remoteContentDescription")}</p>
+						</div>
+						<RemoteContentSettings />
 					</div>
 					<div className="py-6 first:pt-0 last:pb-0">
 						<div className="mb-4">

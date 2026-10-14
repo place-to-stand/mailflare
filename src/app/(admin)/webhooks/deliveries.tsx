@@ -50,17 +50,17 @@ export function WebhookDeliveries({ webhookId }: { webhookId: string }) {
 	}
 
 	return (
-		<div className="overflow-x-auto rounded-xl border border-neutral-200">
+		<div role="region" tabIndex={0} aria-label={t("webhooks.stat.deliveries")} className="overflow-x-auto rounded-xl border border-neutral-200">
 			<table className="w-full min-w-[820px] text-left text-sm">
 				<thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
 					<tr>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.event")}</th>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.status")}</th>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.attempts")}</th>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.response")}</th>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.lastAttempt")}</th>
-						<th className="px-3 py-2 font-medium">{t("webhooks.col.nextRetry")}</th>
-						<th className="px-3 py-2 font-medium" />
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.event")}</th>
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.status")}</th>
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.attempts")}</th>
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.response")}</th>
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.lastAttempt")}</th>
+						<th scope="col" className="px-3 py-2 font-medium">{t("webhooks.col.nextRetry")}</th>
+						<th scope="col" className="px-3 py-2 font-medium" />
 					</tr>
 				</thead>
 				<tbody>

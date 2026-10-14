@@ -203,6 +203,7 @@ export function AdminUpdateCard() {
 						{result.runUrl && (
 							<a className="font-medium underline" href={result.runUrl} target="_blank" rel="noreferrer">
 								{t("update.viewWorkflow")}
+								<span className="sr-only"> ({t("common.opensInNewTab")})</span>
 							</a>
 						)}
 					</p>

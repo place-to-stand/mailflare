@@ -16,6 +16,8 @@ export type Message = {
 	toAddr: string;
 	ccAddr?: string | null;
 	bccAddr?: string | null;
+	/** Comma-separated Reply-To list; replies go here instead of `fromAddr` when set. */
+	replyTo?: string | null;
 	fromContactName?: string | null;
 	fromContactHasAvatar?: boolean;
 	toContactName?: string | null;

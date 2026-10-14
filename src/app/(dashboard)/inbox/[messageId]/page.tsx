@@ -40,6 +40,8 @@ import {
 } from "./utils";
 import { extractCloudAttachments } from "./cloud-attachment-utils";
 import { EmailHtmlRenderer } from "@/components/messages/email-html-renderer";
+import { getEmailAddress } from "@/lib/email/address";
+import { useRemoteContent } from "@/components/messages/use-remote-content";
 import clsx from "clsx";
 import { useAssistantOpen } from "@/components/agent/assistant-open-state";
 import { useMessageContentScroll } from "./use-message-content-scroll";
@@ -57,6 +59,10 @@ export default function MessageDetailPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [latestMessagesFirst] = useLatestMessagesFirst();
   const { enabled: showFullRecipientAddresses } = useShowFullRecipientAddresses();
+  const remote = useRemoteContent(
+    data?.message ? getEmailAddress(data.message.fromAddr) : undefined,
+    data?.message?.status === "spam",
+  );
   const { visible: messageListVisible } = useMessageListVisibility();
   usePageLoading(loading);
   const thread = useMessageThread(messageId, data?.message?.threadId);
@@ -293,13 +299,13 @@ export default function MessageDetailPage() {
           {scheduledAt && <div className="px-4 sm:px-0 sm:pl-10"><ScheduledSendBanner messageId={message.id} scheduledAt={scheduledAt} /></div>}
           <div className="prose max-w-none px-4 text-neutral-900 sm:px-0 sm:pl-16">
             {htmlBody ? (
-              <EmailHtmlRenderer key={message.id} className="mx-auto" html={htmlBody} />
+              <EmailHtmlRenderer key={message.id} className="mx-auto" html={htmlBody} autoAllowRemote={remote.autoAllow} onAllowRemote={remote.allowSender} />
             ) : (
               <pre className="whitespace-pre-wrap text-sm text mx-auto">
                 {cloudAttachmentResult.content}
               </pre>
             )}
-            {quotedHtml && <QuotedEmailToggle html={quotedHtml} />}
+            {quotedHtml && <QuotedEmailToggle html={quotedHtml} autoAllowRemote={remote.autoAllow} onAllowRemote={remote.allowSender} />}
             {bodyDisplay.quotedContent.map((quotedContent) => (
               <PreviousMessage
                 key={`${quotedContent.dateLine}-${quotedContent.content.slice(0, 24)}`}
@@ -330,7 +336,8 @@ export default function MessageDetailPage() {
                         {t("message.openFrom", { provider: attachment.provider })}
                       </span>
                     </span>
-                    <ExternalLink className="h-4 w-4 shrink-0 text-neutral-400" />
+                    <ExternalLink className="h-4 w-4 shrink-0 text-neutral-400" aria-hidden="true" />
+                    <span className="sr-only"> ({t("common.opensInNewTab")})</span>
                   </a>
                 ))}
               </div>

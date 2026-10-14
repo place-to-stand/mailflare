@@ -32,6 +32,7 @@ import {
 	getMessageParty,
 	getMessagePartyClassName,
 	getMessagePreview,
+	getUnreadFlipCount,
 	isMessageListRowUnread,
 	formatEmailPageTitle,
 	getMailboxAddress,
@@ -43,6 +44,7 @@ import {
 	getEmptyFolderLabel,
 	getPermanentDeleteFolderLabel,
 	getPermanentDeleteConfirmText,
+	PartialDeleteError,
 	supportsPermanentDelete,
 } from "@/lib/messages/permanent-delete-utils";
 import clsx from "clsx";
@@ -76,10 +78,14 @@ function MessageListRow({
 	const href = `${config.hrefPrefix}/${message.id}`;
 	const navigation = useMessageNavigation(href, rowMessage);
 
+	const affectsInboxCount = config.folder === "inbox" && !config.folderId;
+
 	async function runRowAction(action: RowMessageAction) {
 		const previousRead = read;
 		const previousThreadUnread = threadUnread;
-		const unreadDelta = action === "read" ? -1 : action === "unread" ? 1 : 0;
+		const unreadDelta = !affectsInboxCount || (action !== "read" && action !== "unread")
+			? 0
+			: getUnreadFlipCount(rowMessage, action === "read") * (action === "read" ? -1 : 1);
 		if (action === "read") setRead(true);
 		if (action === "unread") setRead(false);
 		// Grouped rows derive their unread styling from the thread count, so it must change with the row.
@@ -108,11 +114,11 @@ function MessageListRow({
 			const previousThreadUnread = threadUnread;
 			setRead(true);
 			if (previousThreadUnread !== undefined) setThreadUnread(Math.max(0, previousThreadUnread - 1));
-			if (message.direction === "inbound") dispatchMessageCountsDelta({ inboxUnreadDelta: -1 });
+			if (affectsInboxCount && message.direction === "inbound") dispatchMessageCountsDelta({ inboxUnreadDelta: -1 });
 			void runBulkMessageAction([message.id], "read", false).catch(() => {
 				setRead(false);
 				setThreadUnread(previousThreadUnread);
-				if (message.direction === "inbound") dispatchMessageCountsDelta({ inboxUnreadDelta: 1 });
+				if (affectsInboxCount && message.direction === "inbound") dispatchMessageCountsDelta({ inboxUnreadDelta: 1 });
 			});
 		}
 		navigation.onNavigate(event, !read);
@@ -434,8 +440,8 @@ export function MessageFolderPage({
 		setActionError(null);
 		try {
 			await runSelectedAction(action, folderId);
-		} catch {
-			setActionError(t("actions.error.update"));
+		} catch (error) {
+			setActionError(error instanceof PartialDeleteError ? t("actions.error.deleteSkipped") : t("actions.error.update"));
 		}
 	}
 
@@ -449,17 +455,18 @@ export function MessageFolderPage({
 		setPendingBulkAction(true);
 		const previousMessages = messages;
 		const readValue = action === "read" ? true : action === "unread" ? false : null;
-		const changedMessages = readValue === null
-			? []
-			: messages.filter((message) => selectedIds.includes(message.id) && message.read !== readValue);
+		const inboxUnreadDelta = readValue === null || config.folder !== "inbox" || config.folderId
+			? 0
+			: messages
+				.filter((message) => selectedIds.includes(message.id))
+				.reduce((total, message) => total + getUnreadFlipCount(message, readValue), 0) * (readValue ? -1 : 1);
 		if (readValue !== null) {
 			updateMessages((current) => current.map((message) =>
-				selectedIds.includes(message.id) ? { ...message, read: readValue } : message,
+				selectedIds.includes(message.id)
+					? { ...message, read: readValue, ...(message.threadMessageIds ? { threadUnread: readValue ? 0 : message.threadMessageIds.length } : {}) }
+					: message,
 			));
 			setSelectedMessages((current) => current.map((message) => ({ ...message, read: readValue })));
-			const inboxUnreadDelta = changedMessages
-				.filter((message) => message.direction === "inbound")
-				.reduce((total, message) => total + (readValue ? (message.read ? 0 : -1) : (message.read ? 1 : 0)), 0);
 			if (inboxUnreadDelta) dispatchMessageCountsDelta({ inboxUnreadDelta });
 		}
 		try {
@@ -468,10 +475,7 @@ export function MessageFolderPage({
 		} catch (error) {
 			if (readValue !== null) {
 				updateMessages(previousMessages);
-				const inboxUnreadDelta = changedMessages
-					.filter((message) => message.direction === "inbound")
-					.reduce((total, message) => total + (readValue ? (message.read ? 0 : 1) : (message.read ? -1 : 0)), 0);
-				if (inboxUnreadDelta) dispatchMessageCountsDelta({ inboxUnreadDelta });
+				if (inboxUnreadDelta) dispatchMessageCountsDelta({ inboxUnreadDelta: -inboxUnreadDelta });
 			}
 			throw error;
 		} finally {
@@ -594,7 +598,7 @@ export function MessageFolderPage({
 							onMessageAction={(messageId, action) => {
 								setActionError(null);
 								return runBulkMessageAction(expandSelectedIds([messageId]), action, action !== "read" && action !== "unread").catch((error) => {
-									setActionError(t("actions.error.update"));
+									setActionError(error instanceof PartialDeleteError ? t("actions.error.deleteSkipped") : t("actions.error.update"));
 									throw error;
 								});
 							}}

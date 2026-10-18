@@ -26,6 +26,9 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
  */
 export async function POST(request: Request) {
 	const env = getEnv();
+	// Fork: this endpoint takes a password without Turnstile and hands out a key that never expires,
+	// so it stays off unless the operator opts in.
+	if (env.DEVICE_SIGN_IN !== "enabled") return json({ error: "Not found" }, 404);
 	let body: unknown;
 	try {
 		body = await readJsonBody(request, 16 * 1024);

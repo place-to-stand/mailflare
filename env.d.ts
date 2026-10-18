@@ -55,6 +55,8 @@ interface CloudflareEnv {
 	MAILFLARE_RUNTIME?: "node";
 	/** Secret the operator passes as /setup?token=… to create the first admin; setup stays closed without it. */
 	SETUP_TOKEN?: string;
+	/** Fork: set to "enabled" to allow password sign-in for mobile apps at POST /api/auth/device. Off by default. */
+	DEVICE_SIGN_IN?: string;
 	/** Shared secret the Cloudflare email relay signs inbound webhooks with (self-hosted only). */
 	INBOUND_WEBHOOK_SECRET?: string;
 	/** Cloudflare account id, needed for the Email Sending REST API off Workers. */

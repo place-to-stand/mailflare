@@ -22,6 +22,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { CardGridSkeleton } from "@/components/page-skeletons";
 import { useSelectedMailbox } from "@/components/mailbox-provider";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { canManageDomains } from "@/lib/auth/admin";
 import type { DomainRoutingProps, DomainRule, DomainRuleInput } from "./types";
 import {
 	ACTION_LABELS,
@@ -55,15 +56,14 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 
 	const domainId = domain?.id ?? selectedMailbox?.domainId ?? "";
 	const mailboxId = selectedMailbox?.id ?? "";
-	const mailboxAccessId = domain ? undefined : mailboxId;
-	// The API only lets domain admins write domain rules.
-	const canManage = !!domain || (currentUser?.role === "admin" && selectedMailbox?.permission === "full_access");
-	const rulesQueryKey = ["domain-rules", domainId, mailboxAccessId ?? "admin"] as const;
+	// The API only lets admins who can manage domains read or write domain rules.
+	const canManage = !!currentUser && canManageDomains(currentUser);
+	const rulesQueryKey = ["domain-rules", domainId] as const;
 
 	const rules = useQuery({
 		queryKey: rulesQueryKey,
-		enabled: !!domainId && (!!domain || !!mailboxId) && canManage,
-		queryFn: () => fetchDomainRules(domainId, mailboxAccessId),
+		enabled: !!domainId && canManage,
+		queryFn: () => fetchDomainRules(domainId),
 	});
 
 	const hostname = domain?.hostname ?? selectedMailbox?.hostname ?? "";
@@ -73,8 +73,8 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 		mutationFn: () => {
 			const payload: DomainRuleInput = { ...form, domainId };
 			return editing
-				? updateDomainRule(editing.id, payload, mailboxAccessId)
-				: createDomainRule(payload, mailboxAccessId);
+				? updateDomainRule(editing.id, payload)
+				: createDomainRule(payload);
 		},
 		onSuccess: () => {
 			setDialogOpen(false);
@@ -86,13 +86,13 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 	});
 
 	const remove = useMutation({
-		mutationFn: (id: string) => deleteDomainRule(id, mailboxAccessId),
+		mutationFn: (id: string) => deleteDomainRule(id),
 		onSuccess: () => qc.invalidateQueries({ queryKey: rulesQueryKey }),
 	});
 
 	const toggle = useMutation({
 		mutationFn: (rule: DomainRule) =>
-			updateDomainRule(rule.id, { ...ruleToInput(rule), enabled: !rule.enabled }, mailboxAccessId),
+			updateDomainRule(rule.id, { ...ruleToInput(rule), enabled: !rule.enabled }),
 		onSuccess: () => qc.invalidateQueries({ queryKey: rulesQueryKey }),
 	});
 
@@ -114,6 +114,7 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 
 	const blockRules = (rules.data?.rules ?? []).filter((r) => r.action === "reject");
 	const fallbackRules = (rules.data?.rules ?? []).filter((r) => r.action !== "reject");
+	if (!canManage) return null;
 
 	return (
 		<div className="space-y-6">
@@ -130,7 +131,7 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 					<p className="mt-1 text-sm text-neutral-500">{t("routing.rulesFor", { host: hostname || t("routing.selectInbox") })}</p>
 				</div>
 				<div className="flex items-end gap-2">
-					<Button onClick={openCreate} disabled={!domainId || (!domain && !mailboxId) || !canManage}>
+					<Button onClick={openCreate} disabled={!domainId}>
 						<Plus className="h-4 w-4" /> {t("routing.addRoute")}
 					</Button>
 				</div>
@@ -142,12 +143,6 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 				<Card>
 					<CardContent className="pt-6 text-sm text-neutral-500">
 						{t("routing.selectInboxFirst")}
-					</CardContent>
-				</Card>
-			) : !canManage ? (
-				<Card>
-					<CardContent className="pt-6 text-sm text-neutral-500">
-						{t("routing.needFullAccess")}
 					</CardContent>
 				</Card>
 			) : (

@@ -11,12 +11,14 @@ import {
 	toRuleColumns,
 } from "@/lib/domains/routing-rules";
 import type { DomainRoutingRuleRouteParams } from "./types";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 
 /** Loads a domain-scope rule the caller is allowed to administer. */
 async function loadRule(request: Request, id: string) {
 	const env = getEnv();
 	const auth = await requireSessionUser(env, request);
 	if (auth.error) return { error: auth.error } as const;
+	if (!hasValidSessionMutationOrigin(request)) return { error: NextResponse.json({ error: "Invalid origin" }, { status: 403 }) } as const;
 	const user = auth.user;
 	const db = getDb(env);
 	const [rule] = await db

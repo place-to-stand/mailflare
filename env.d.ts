@@ -20,6 +20,13 @@ interface CloudflareEnv {
 		import("./src/lib/realtime/hub").RealtimeHub
 	>;
 	LOGIN_RATE_LIMIT?: RateLimit;
+	/** Mobile device sign-in (`/api/auth/device`), stricter than the web login. */
+	DEVICE_LOGIN_RATE_LIMIT?: RateLimit;
+	/** APNs auth key for the mobile push relay (src/lib/push/native.ts). */
+	APNS_KEY_ID?: string;
+	APNS_TEAM_ID?: string;
+	/** The .p8 file contents (PKCS#8 PEM). */
+	APNS_PRIVATE_KEY?: string;
 	AGENT_RATE_LIMIT?: RateLimit;
 	/**
 	 * Backblaze B2 storage. When all four are set, B2 replaces the R2 binding for raw mail, attachments, Drive,
@@ -48,6 +55,8 @@ interface CloudflareEnv {
 	MAILFLARE_RUNTIME?: "node";
 	/** Secret the operator passes as /setup?token=… to create the first admin; setup stays closed without it. */
 	SETUP_TOKEN?: string;
+	/** Fork: set to "enabled" to allow password sign-in for mobile apps at POST /api/auth/device. Off by default. */
+	DEVICE_SIGN_IN?: string;
 	/** Shared secret the Cloudflare email relay signs inbound webhooks with (self-hosted only). */
 	INBOUND_WEBHOOK_SECRET?: string;
 	/** Cloudflare account id, needed for the Email Sending REST API off Workers. */

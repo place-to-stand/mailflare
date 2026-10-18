@@ -5,6 +5,7 @@ import { canManageUsers, isPrimaryAdmin } from "@/lib/auth/admin";
 import { getLicenseEntitlements } from "@/lib/licenses/service";
 import { countUsedAccountSeats } from "@/lib/licenses/seats";
 import { deleteAccounts } from "@/lib/accounts/deletion";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { createAccountResponse } from "./create";
 import { accountListItemFromUser, listAccountsForAdmin, requireTeamAdmin } from "./utils";
 
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
 	const access = await requireTeamAdmin(request);
 	if (access.error) return access.error;
+	if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	const body = (await request.json().catch(() => null)) as { ids?: unknown; transferToId?: unknown } | null;
 	const ids = Array.isArray(body?.ids) ? body.ids.filter((id): id is string => typeof id === "string" && !!id) : [];
 	const transferToId = typeof body?.transferToId === "string" ? body.transferToId : null;

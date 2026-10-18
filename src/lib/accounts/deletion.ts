@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { calendarEvents, driveItems, mailboxes, messageAttachments, messages, sessions, users } from "@/db/schema";
+import { calendarEvents, domains, driveItems, mailboxAccess, mailboxes, messageAttachments, messages, sessions, users } from "@/db/schema";
 import { canManageUsers, isPrimaryAdmin } from "@/lib/auth/admin";
 import type { SessionUser } from "@/lib/auth/types";
 import { deleteDriveItems } from "@/lib/drive/access";
@@ -42,6 +42,28 @@ export async function transferAccountData(env: CloudflareEnv, fromId: string, fr
 }
 
 /**
+ * Fork guard: purging a user cascades through foreign keys to the domains and mailboxes they own, which would take
+ * every other user's mailbox on those domains and every shared inbox with it. Refuse until those are moved or removed.
+ */
+async function getSharedOwnershipError(db: ReturnType<typeof getDb>, account: Pick<typeof users.$inferSelect, "id" | "email">): Promise<string | null> {
+	const [foreignMailbox] = await db
+		.select({ id: mailboxes.id })
+		.from(mailboxes)
+		.innerJoin(domains, eq(domains.id, mailboxes.domainId))
+		.where(and(eq(domains.userId, account.id), ne(mailboxes.userId, account.id)))
+		.limit(1);
+	if (foreignMailbox) return `${account.email} owns a domain with other people's mailboxes. Move the domain to another admin first`;
+	const [shared] = await db
+		.select({ id: mailboxAccess.id })
+		.from(mailboxAccess)
+		.innerJoin(mailboxes, eq(mailboxes.id, mailboxAccess.mailboxId))
+		.where(and(eq(mailboxes.userId, account.id), ne(mailboxAccess.userId, account.id)))
+		.limit(1);
+	if (shared) return `${account.email} owns a mailbox shared with other people. Move or unshare it first`;
+	return null;
+}
+
+/**
  * Soft-deletes accounts: they are disabled, signed out and stamped with `deletedAt`. They can be restored until the
  * scheduled purge removes them after the retention window. Optionally hands their Drive and calendar data to another account.
  */
@@ -58,6 +80,8 @@ export async function deleteAccounts(env: CloudflareEnv, actor: SessionUser, inp
 		if (target.isPrimaryAdmin) return { ok: false, status: 403, error: "The primary admin cannot be deleted" };
 		if (!isPrimaryAdmin(actor) && target.role === "admin") return { ok: false, status: 403, error: "Only the primary admin can manage admin accounts" };
 		if (target.deletedAt) return { ok: false, status: 409, error: `${target.email} is already deleted` };
+		const sharedError = await getSharedOwnershipError(db, target);
+		if (sharedError) return { ok: false, status: 409, error: sharedError };
 	}
 	const transferToId = input.transferToId || null;
 	if (transferToId) {
@@ -93,6 +117,9 @@ export async function restoreAccount(env: CloudflareEnv, actor: SessionUser, id:
 
 async function purgeAccount(env: CloudflareEnv, account: typeof users.$inferSelect): Promise<void> {
 	const db = getDb(env);
+	// Sharing can change during the restore window, so check again before anything is removed.
+	const sharedError = await getSharedOwnershipError(db, account);
+	if (sharedError) throw new Error(sharedError);
 	const owned = await db.select().from(mailboxes).where(eq(mailboxes.userId, account.id));
 	for (const mailbox of owned) {
 		try {
@@ -109,6 +136,13 @@ async function purgeAccount(env: CloudflareEnv, account: typeof users.$inferSele
 		const keys = [...raw.map((row) => row.key), ...attachments.map((row) => row.key)].filter((key): key is string => !!key);
 		for (const group of chunks(keys, 500)) await env.BUCKET.delete(group);
 	}
+	// Messages cascade with messages.user_id. Mail this user wrote in mailboxes they do not own belongs to that
+	// mailbox, so hand it to the mailbox owner instead of deleting it with the account.
+	const ownedIds = owned.map((mailbox) => mailbox.id);
+	await db
+		.update(messages)
+		.set({ userId: sql`(SELECT ${mailboxes.userId} FROM ${mailboxes} WHERE ${mailboxes.id} = ${messages.mailboxId})` })
+		.where(and(eq(messages.userId, account.id), isNotNull(messages.mailboxId), ownedIds.length ? notInArray(messages.mailboxId, ownedIds) : undefined));
 	await env.BUCKET.delete(account.avatarKey ?? avatarKeyFor(account.id));
 	await db.delete(users).where(eq(users.id, account.id));
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { ChevronUp, FileText, Forward, Maximize2, Minimize2, Minus, Paperclip, Reply, Trash2, X } from "lucide-react";
+import { BellRing, ChevronUp, Eye, EyeOff, FileText, Forward, Maximize2, Minimize2, Minus, Paperclip, Reply, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/components/language-provider";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,9 @@ import { SendReview } from "@/components/agent/send-review";
 import type { ReviewSnapshot } from "@/components/agent/send-review-types";
 import { useIsMobile } from "@/components/sidebar-mobile-utils";
 import { useSheetViewport } from "./use-sheet-viewport";
+import { useTrackOpens } from "./use-track-opens";
+import { FollowUpMenu } from "@/components/follow-ups/follow-up-menu";
+import { followUpOptionKey } from "@/components/follow-ups/follow-up-client-utils";
 import { buildSendFormData, fetchDraft, formatAttachmentSize } from "./utils";
 import { RecipientInput } from "./recipient-input";
 import { RichTextEditor } from "./rich-text-editor";
@@ -49,7 +52,7 @@ export function ComposeForm({
 }) {
 	const { t } = useLanguage();
 	const router = useRouter();
-	const { showNotice } = useCompose();
+	const { showNotice, openDraftComposer } = useCompose();
 	const { selectedMailbox, setSelectedMailbox, mailboxes } = useSelectedMailbox();
 	const [draftId, setDraftId] = useState<string | null>(null);
 	const [agentRevision, setAgentRevision] = useState<number | null>(null);
@@ -76,6 +79,8 @@ export function ComposeForm({
 	const [loadingDraft, setLoadingDraft] = useState(false);
 	const [deletingDraft, setDeletingDraft] = useState(false);
 	const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+	const [trackOpens, setTrackOpens] = useTrackOpens();
+	const [followUpDays, setFollowUpDays] = useState<number | null>(null);
 	const [loadedDraftMailboxId, setLoadedDraftMailboxId] = useState<string | null>(null);
 	const [loadedDraftFrom, setLoadedDraftFrom] = useState<string | null>(null);
 	const [selectedFrom, setSelectedFrom] = useState("");
@@ -110,6 +115,13 @@ export function ComposeForm({
 	const pendingSave = useRef<(() => Promise<void>) | null>(null);
 	const draftGeneration = useRef(0);
 	const draftIdRef = useRef<string | null>(null);
+	const agentRevisionRef = useRef(agentRevision);
+	useEffect(() => {
+		agentRevisionRef.current = agentRevision;
+	}, [agentRevision]);
+	// A pending human send review owns this snapshot. Autosaving after creating
+	// an approval increments its revision and makes confirmation impossible.
+	const reviewInProgressRef = useRef(false);
 	const saveQueue = useRef<Promise<void>>(Promise.resolve());
 	const uploadedFiles = useRef(new WeakSet<File>());
 	const rejectedFiles = useRef(new WeakSet<File>());
@@ -243,13 +255,13 @@ export function ComposeForm({
 		const signatureOnly = bodyContent === (selectedMailbox?.signature?.trim() ?? "");
 		const hasContent =
 			to.length > 0 || cc.length > 0 || bcc.length > 0 || subject.trim() || quotedHtml || attachments.length > 0 || (bodyContent && !signatureOnly);
-		if (!fromAddr || !hasContent || loadingDraft) return;
+		if (!fromAddr || !hasContent || loadingDraft || reviewInProgressRef.current) return;
 		if (saveTimer.current) clearTimeout(saveTimer.current);
 
 		const generation = draftGeneration.current;
 		const save = () => {
 			const run = saveQueue.current.then(async () => {
-				if (generation !== draftGeneration.current) return;
+				if (generation !== draftGeneration.current || reviewInProgressRef.current) return;
 				const payload = {
 					mailboxId: selectedMailbox?.id,
 					from: fromAddr,
@@ -278,7 +290,7 @@ export function ComposeForm({
 				draftIdRef.current = data.draft.id;
 				setDraftId(data.draft.id);
 				const pending = attachments.filter((attachment) => !uploadedFiles.current.has(attachment.file) && !rejectedFiles.current.has(attachment.file));
-				if (agentRevision !== null || pending.length === 0) return;
+				if (agentRevisionRef.current !== null || pending.length === 0) return;
 				const form = new FormData();
 				for (const attachment of pending) form.append("attachments", attachment.file);
 				const uploaded = await authFetch(`/api/drafts/${data.draft.id}/attachments`, { method: "POST", body: form });
@@ -304,7 +316,7 @@ export function ComposeForm({
 		return () => {
 			if (saveTimer.current) clearTimeout(saveTimer.current);
 		};
-	}, [agentRevision, attachments, bcc, cc, fromAddr, html, loadingDraft, quotedHtml, selectedMailbox?.id, selectedMailbox?.signature, subject, threading, to]);
+	}, [attachments, bcc, cc, fromAddr, html, loadingDraft, quotedHtml, selectedMailbox?.id, selectedMailbox?.signature, subject, threading, to]);
 
 	useEffect(() => {
 		if (!draftIdToLoad || loadingDraft) return;
@@ -330,6 +342,9 @@ export function ComposeForm({
 			setToast({ type: "error", message: t("schedule.pastTime") });
 			return;
 		}
+		// Freeze autosave for an AI draft before waiting for any queued save.
+		// Otherwise a debounced PATCH can invalidate the approval snapshot.
+		if (draftId && agentRevision !== null) reviewInProgressRef.current = true;
 		if (saveTimer.current) clearTimeout(saveTimer.current);
 		pendingSave.current = null;
 		setLoading(true);
@@ -358,12 +373,15 @@ export function ComposeForm({
 				const result = await response.json() as { approvalId?: string; snapshot?: ReviewSnapshot; error?: string };
 				if (!response.ok || !result.approvalId || !result.snapshot) throw new Error(result.error || t("compose.error.createReview"));
 				setAgentReview({ approvalId: result.approvalId, snapshot: result.snapshot });
-			} catch (cause) { setToast({ type: "error", message: cause instanceof Error ? cause.message : t("compose.error.reviewDraft") }); }
+			} catch (cause) {
+				reviewInProgressRef.current = false;
+				setToast({ type: "error", message: cause instanceof Error ? cause.message : t("compose.error.reviewDraft") });
+			}
 			finally { setLoading(false); }
 			return;
 		}
 		let res: Response;
-		let data: { messageId?: string; scheduled?: boolean; error?: string };
+		let data: { messageId?: string; scheduled?: boolean; undoSeconds?: number; error?: string };
 		try {
 			res = await authFetch("/api/send", {
 				method: "POST",
@@ -380,9 +398,12 @@ export function ComposeForm({
 					threading: threading ?? undefined,
 					draftId,
 					scheduledAt,
+					undoSend: true,
+					trackOpens,
+					followUpDays,
 				}),
 			});
-			data = (await res.json()) as { messageId?: string; scheduled?: boolean; error?: string };
+			data = (await res.json()) as { messageId?: string; scheduled?: boolean; undoSeconds?: number; error?: string };
 		} catch {
 			setLoading(false);
 			setToast({ type: "error", message: t("compose.error.sendFailed") });
@@ -395,11 +416,9 @@ export function ComposeForm({
 			return;
 		}
 
-		if (currentDraftId) {
-			void authFetch(`/api/drafts/${currentDraftId}`, { method: "DELETE" }).finally(() => {
-				window.dispatchEvent(new Event("mailflare:messages-changed"));
-			});
-		}
+		// With a draft, refresh once it is gone so the lists reload a single time.
+		const refreshLists = () => window.dispatchEvent(new Event("mailflare:messages-changed"));
+		if (currentDraftId) void authFetch(`/api/drafts/${currentDraftId}`, { method: "DELETE" }).finally(refreshLists);
 		draftGeneration.current += 1;
 		draftIdRef.current = null;
 		setDraftId(null);
@@ -415,14 +434,40 @@ export function ComposeForm({
 		setQuotedHtml(null);
 		setAttachments([]);
 		setScheduledAt(null);
-		showNotice(data.scheduled ? t("compose.scheduled") : t("compose.sent"));
-		window.dispatchEvent(new Event("mailflare:messages-changed"));
+		const sentMessageId = data.messageId;
+		if (data.undoSeconds && sentMessageId) {
+			// The send is queued for the undo window; Cancel puts the message back in Drafts and reopens it.
+			showNotice(t("compose.sent"), {
+				durationMs: data.undoSeconds * 1000,
+				action: { label: t("compose.cancelSend"), onClick: () => void cancelSend(sentMessageId) },
+			});
+			// Refresh the lists once the queue has had time to deliver it.
+			setTimeout(() => window.dispatchEvent(new Event("mailflare:messages-changed")), (data.undoSeconds + 3) * 1000);
+		} else {
+			showNotice(data.scheduled ? t("compose.scheduled") : t("compose.sent"));
+		}
+		if (!currentDraftId) refreshLists();
 
 		if (onClose) {
 			dismiss();
 			return;
 		}
 		router.push("/sent");
+	}
+
+	async function cancelSend(messageId: string) {
+		try {
+			const res = await authFetch(`/api/messages/${messageId}/cancel-schedule`, { method: "POST" });
+			if (!res.ok) {
+				showNotice(t("compose.cancelTooLate"));
+				return;
+			}
+			showNotice(t("compose.sendCancelled"));
+			window.dispatchEvent(new Event("mailflare:messages-changed"));
+			openDraftComposer(messageId);
+		} catch {
+			showNotice(t("compose.cancelTooLate"));
+		}
 	}
 
 	async function deleteDraftAndClose() {
@@ -610,7 +655,7 @@ export function ComposeForm({
 
 	return (
 		<>
-			{agentReview && <SendReview approvalId={agentReview.approvalId} snapshot={agentReview.snapshot} onClose={() => setAgentReview(null)} onSent={() => { setAgentReview(null); if (onClose) dismiss(); else router.push("/sent"); }} />}
+			{agentReview && <SendReview approvalId={agentReview.approvalId} snapshot={agentReview.snapshot} onClose={() => { reviewInProgressRef.current = false; setAgentReview(null); }} onSent={() => { reviewInProgressRef.current = false; setAgentReview(null); if (onClose) dismiss(); else router.push("/sent"); }} />}
 			{mode === "popup" && modalMode && !minimized && <div className="fixed inset-0 z-40 bg-neutral-950/65" aria-hidden="true" />}
 			{toast && (
 				<div
@@ -791,6 +836,40 @@ export function ComposeForm({
 								>
 									<Paperclip className="h-4 w-4" />
 								</button>
+							</Tooltip>
+							<Tooltip label={trackOpens ? t("compose.trackOpensOn") : t("compose.trackOpensOff")}>
+								<button
+									type="button"
+									aria-label={t("compose.trackOpens")}
+									aria-pressed={trackOpens}
+									onClick={() => setTrackOpens(!trackOpens)}
+									disabled={loading || loadingDraft}
+									className={cn(
+										"rounded-md p-1.5 hover:bg-neutral-100 disabled:pointer-events-none disabled:opacity-50 max-md:px-2",
+										trackOpens ? "text-blue-600 hover:text-blue-700" : "text-neutral-500 hover:text-neutral-900",
+									)}
+								>
+									{trackOpens ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+								</button>
+							</Tooltip>
+							<Tooltip label={followUpDays ? t("followUp.remindOn", { when: t(followUpOptionKey(followUpDays)) }) : t("followUp.remindMe")}>
+								<FollowUpMenu
+									disabled={loading || loadingDraft}
+									onPick={setFollowUpDays}
+									onClear={followUpDays ? () => setFollowUpDays(null) : undefined}
+									trigger={
+										<button
+											type="button"
+											aria-label={t("followUp.remindMe")}
+											className={cn(
+												"rounded-md p-1.5 hover:bg-neutral-100 disabled:pointer-events-none disabled:opacity-50 max-md:px-2",
+												followUpDays ? "text-amber-600 hover:text-amber-700" : "text-neutral-500 hover:text-neutral-900",
+											)}
+										>
+											<BellRing className="h-4 w-4" />
+										</button>
+									}
+								/>
 							</Tooltip>
 							<span className="flex-1 max-md:hidden" />
 							<Tooltip label={t("compose.deleteDraft")}>

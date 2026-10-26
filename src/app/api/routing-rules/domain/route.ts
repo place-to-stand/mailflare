@@ -55,11 +55,9 @@ export async function POST(request: Request) {
 	}
 
 	const db = getDb(env);
-	// Domain rules apply to every address on the domain (a reject runs before any
-	// mailbox lookup), so only an admin who owns the domain may write them.
 	const adminDomain = await getAdminDomain(db, user, parsed.data.domainId);
 	if (!adminDomain) {
-		return NextResponse.json({ error: "Domain admin access is required" }, { status: 403 });
+		return NextResponse.json({ error: "Domain management permission is required" }, { status: 403 });
 	}
 
 	const destinationAllowed = parsed.data.mailboxId

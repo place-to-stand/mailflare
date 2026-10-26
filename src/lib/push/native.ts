@@ -1,9 +1,10 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { getDb } from "@/db";
 import { pushDevices } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import type { NewMessageNotification } from "@/lib/realtime/types";
 import { encryptPreview, importApnsKey, signApnsJwt } from "./native-crypto";
+import { isRelayHandle, relayBaseUrl, sendViaRelay } from "./relay";
 
 /**
  * Native push relay for the mobile apps (APNs). Configured with the
@@ -19,8 +20,14 @@ function apnsConfig(env: CloudflareEnv): ApnsConfig | null {
 	return keyId && teamId && privateKey ? { keyId, teamId, privateKey } : null;
 }
 
+/** Whether this server can deliver a push at all: with its own APNs key or through a relay. */
 export function isNativePushConfigured(env: CloudflareEnv): boolean {
-	return apnsConfig(env) !== null;
+	return apnsConfig(env) !== null || relayBaseUrl(env) !== null;
+}
+
+/** Whether a registration with this token can be delivered: a relay handle needs the relay, an APNs token needs a key. */
+export function canDeliverTo(env: CloudflareEnv, token: string): boolean {
+	return isRelayHandle(token) ? relayBaseUrl(env) !== null : apnsConfig(env) !== null;
 }
 
 /** APNs accepts a provider token for up to an hour; refresh well before. */
@@ -49,6 +56,8 @@ export type PushRegistration = {
 /** Registers a device token for the user (and key) that authenticated; other accounts on the same device keep theirs. */
 export async function registerPushDevice(env: CloudflareEnv, userId: string, apiKeyId: string, registration: PushRegistration): Promise<void> {
 	const now = new Date();
+	// One registration per device key: a token (or relay handle) replaces the one it superseded.
+	await getDb(env).delete(pushDevices).where(and(eq(pushDevices.apiKeyId, apiKeyId), ne(pushDevices.token, registration.token)));
 	await getDb(env)
 		.insert(pushDevices)
 		.values({ id: newId("pdev"), userId, apiKeyId, ...registration, createdAt: now, updatedAt: now })
@@ -66,51 +75,88 @@ export async function unregisterPushDevice(env: CloudflareEnv, apiKeyId: string)
 export async function buildApnsPayload(device: { publicKey: string | null; previews: boolean }, accountId: string, message: NewMessageNotification) {
 	const base = { v: 1, accountId, mailboxId: message.mailboxId };
 	if (!device.previews || !device.publicKey) {
-		return { aps: { alert: { title: "Mailflare", body: "New message" }, "mutable-content": 1, sound: "default", "thread-id": message.mailboxId }, mf: base };
+		return { aps: { alert: { title: "Mailflare", body: "New message" }, "mutable-content": 1, "content-available": 1, sound: "default", "thread-id": message.mailboxId }, mf: base };
 	}
 	const preview = new TextEncoder().encode(
 		JSON.stringify({ from: message.from, fromName: message.fromName, subject: message.subject, messageId: message.messageId }),
 	);
 	return {
 		// Shown only if the extension cannot decrypt in time.
-		aps: { alert: { title: "Mailflare", body: "New message" }, "mutable-content": 1, sound: "default", "thread-id": message.mailboxId },
+		aps: { alert: { title: "Mailflare", body: "New message" }, "mutable-content": 1, "content-available": 1, sound: "default", "thread-id": message.mailboxId },
 		mf: { ...base, enc: await encryptPreview(device.publicKey, preview) },
 	};
 }
 
 /** Sends a new-message push to every registered device of `userIds`. Expired tokens are dropped. */
 export async function sendNativePush(env: CloudflareEnv, userIds: string[], message: NewMessageNotification): Promise<void> {
-	const config = apnsConfig(env);
-	if (!config || userIds.length === 0) return;
+	if (userIds.length === 0) return;
 	const db = getDb(env);
 	const devices = await db.select().from(pushDevices).where(inArray(pushDevices.userId, userIds));
-	if (devices.length === 0) return;
-	const token = await providerToken(config);
+	if (devices.length === 0) {
+		console.info(`Native push: no registered devices for ${userIds.length} user(s)`);
+		return;
+	}
+	const config = apnsConfig(env);
+	const relay = relayBaseUrl(env);
+	let apnsToken: string | null = null;
+	if (config && devices.some((device) => !isRelayHandle(device.token))) {
+		try {
+			apnsToken = await providerToken(config);
+		} catch (error) {
+			console.error("Native push: the APNs key could not be read. Check APNS_PRIVATE_KEY is the full .p8 contents.", error);
+		}
+	}
 	const stale: string[] = [];
-	await Promise.allSettled(
+	const results = await Promise.allSettled(
 		devices.map(async (device) => {
-			const host = device.environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
 			const payload = await buildApnsPayload(device, device.clientRef ?? device.userId, message);
+			const collapseId = message.messageId.slice(0, 64);
+			if (isRelayHandle(device.token)) {
+				if (!relay) {
+					console.warn("Native push skipped: a device registered through a push relay but APNS_RELAY_URL is not set");
+					return;
+				}
+				const result = await sendViaRelay(relay, device.token, payload, collapseId);
+				if (result.kind === "sent") console.info(`Push sent through the relay (${device.environment}, topic ${device.topic})`);
+				else if (result.kind === "gone") {
+					console.warn(`Relay dropped a device (${result.status}, ${device.environment}, topic ${device.topic})`);
+					stale.push(device.id);
+				} else console.warn(`Relay push ${result.kind} (${result.status}${result.kind === "failed" ? ` ${result.error}` : ""})`);
+				return;
+			}
+			if (!config) {
+				console.warn("Native push skipped: no APNS_KEY_ID, APNS_TEAM_ID and APNS_PRIVATE_KEY for a directly registered device");
+				return;
+			}
+			if (!apnsToken) return;
+			const host = device.environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
 			const response = await fetch(`https://${host}/3/device/${device.token}`, {
 				method: "POST",
 				headers: {
-					authorization: `bearer ${token}`,
+					authorization: `bearer ${apnsToken}`,
 					"apns-topic": device.topic,
 					"apns-push-type": "alert",
 					"apns-priority": "10",
-					"apns-collapse-id": message.messageId.slice(0, 64),
+					"apns-collapse-id": collapseId,
 					"content-type": "application/json",
 				},
 				body: JSON.stringify(payload),
 			});
-			if (response.ok) return;
+			if (response.ok) {
+				console.info(`APNs push sent (${device.environment}, topic ${device.topic})`);
+				return;
+			}
 			const reason = ((await response.json().catch(() => ({}))) as { reason?: string }).reason;
 			if (response.status === 410 || reason === "BadDeviceToken" || reason === "Unregistered" || reason === "DeviceTokenNotForTopic") {
+				console.warn(`APNs dropped a device (${response.status} ${reason ?? ""}, ${device.environment}, topic ${device.topic})`);
 				stale.push(device.id);
 			} else {
 				console.warn(`APNs push failed (${response.status} ${reason ?? ""})`);
 			}
 		}),
 	);
+	for (const result of results) {
+		if (result.status === "rejected") console.error("Native push errored", result.reason);
+	}
 	if (stale.length) await db.delete(pushDevices).where(inArray(pushDevices.id, stale));
 }

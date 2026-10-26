@@ -30,11 +30,9 @@ async function loadRule(request: Request, id: string) {
 		return { error: NextResponse.json({ error: "Rule not found" }, { status: 404 }) } as const;
 	}
 
-	// Domain rules apply to every address on the domain, so only an admin who owns
-	// the domain may change or delete them.
 	const adminDomain = await getAdminDomain(db, user, rule.domainId);
 	if (!adminDomain) {
-		return { error: NextResponse.json({ error: "Domain admin access is required" }, { status: 403 }) } as const;
+		return { error: NextResponse.json({ error: "Domain management permission is required" }, { status: 403 }) } as const;
 	}
 
 	return { env, db, user, rule, adminDomain, error: null } as const;

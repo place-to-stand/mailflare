@@ -14,6 +14,10 @@ import type { AttachmentContent } from "@/lib/email/attachment-types";
 import { getOutboundAttachmentMaxMb } from "@/lib/email/attachment-policy";
 import { getOutboundProviderConfig, sendThroughProvider } from "@/lib/email/outbound-provider";
 import { prepareCloudflareAttachments } from "@/lib/email/cloud-attachment-utils";
+import { ensureTrackingToken, getTrackingHostForSender } from "@/lib/tracking/open-tracking";
+import { setFollowUp } from "@/lib/follow-ups/service";
+import { buildTrackingPixelUrl, injectTrackingPixel, resolveTrackingOrigin } from "@/lib/tracking/open-tracking-utils";
+import { getComposePreferences } from "@/lib/compose/preferences";
 
 export type SendEmailInput = {
 	userId: string;
@@ -36,9 +40,16 @@ export type SendEmailInput = {
 	attachments?: AttachmentContent[];
 	/** Future delivery time. Values at or before the current time send immediately. */
 	scheduledAt?: string | Date;
+	/** Hold the send for the user's undo window (via the scheduled queue) so they can cancel it. */
+	undoSend?: boolean;
+	/** Add a read-receipt pixel to the HTML part (the stored Sent copy stays without it). */
+	trackOpens?: boolean;
+	/** Bring the thread back to the inbox after this many days unless a reply arrives. */
+	followUpDays?: number;
 	publicOrigin?: string;
 };
 
+/** How long a send started from the composer waits before it is delivered. */
 const MAX_RECIPIENTS = 50;
 const MAX_QUEUE_DELAY_SECONDS = 24 * 60 * 60;
 
@@ -71,7 +82,7 @@ function toRecipientList(value: string | string[] | undefined): string[] {
 export async function sendEmail(
 	env: CloudflareEnv,
 	input: SendEmailInput,
-): Promise<{ messageId: string; scheduled?: boolean }> {
+): Promise<{ messageId: string; scheduled?: boolean; undoSeconds?: number }> {
 	const db = getDb(env);
 	const sender = await getAuthorizedSenderAddress(env, input);
 	const attachments = input.attachments ?? [];
@@ -108,9 +119,12 @@ export async function sendEmail(
 
 	const messageId = newId("msg");
 	const requestedSchedule = input.scheduledAt ? new Date(input.scheduledAt) : null;
-	const scheduledAt = requestedSchedule && requestedSchedule.getTime() > Date.now()
+	const userScheduledAt = requestedSchedule && requestedSchedule.getTime() > Date.now()
 		? requestedSchedule
 		: null;
+	// An explicit schedule wins; otherwise an undoable send waits out the user's undo window.
+	const undoSeconds = !userScheduledAt && input.undoSend ? (await getComposePreferences(env, input.userId)).undoSendSeconds : 0;
+	const scheduledAt = userScheduledAt ?? (undoSeconds > 0 ? new Date(Date.now() + undoSeconds * 1000) : null);
 	const snippet = buildSnippet(input.text ?? null, input.html ?? null);
 	const toAddr = joinEmailAddressList(to);
 
@@ -173,7 +187,7 @@ export async function sendEmail(
 	};
 	if (scheduledAt) {
 		await enqueueScheduledDelivery(env, delivery, scheduledAt);
-		return { messageId, scheduled: true };
+		return userScheduledAt ? { messageId, scheduled: true } : { messageId, scheduled: true, undoSeconds };
 	}
 
 	await deliverEmail(env, delivery);
@@ -200,6 +214,7 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 		if (prepared.text !== input.text || prepared.html !== input.html) {
 			await db.update(messages).set({ textBody: prepared.text ?? null, htmlBody: prepared.html ?? null }).where(eq(messages.id, messageId));
 		}
+		const html = input.trackOpens && prepared.html ? await withTrackingPixel(env, messageId, from, prepared.html, input.publicOrigin) : prepared.html;
 		const response = await sendThroughProvider(
 			env,
 			provider,
@@ -210,7 +225,7 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 				bcc,
 				subject: input.subject,
 				headers,
-				html: prepared.html,
+				html,
 				text: prepared.text,
 				attachments: prepared.attachments.map((attachment) => ({
 					filename: attachment.filename,
@@ -234,6 +249,10 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 			})
 			.where(eq(messages.id, messageId));
 		await db.update(outboundJobs).set({ status: "sent", updatedAt: new Date() }).where(eq(outboundJobs.id, jobId));
+		if (input.followUpDays) {
+			// The message is already out; a reminder that cannot be stored must not fail the send.
+			await setFollowUp(env, { messageId, userId: input.userId, days: input.followUpDays }).catch((error) => console.error("Follow-up reminder skipped", error));
+		}
 
 		await dispatchWebhooks(env, input.userId, "message.outbound", {
 			messageId,
@@ -257,6 +276,23 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 			.where(eq(outboundJobs.id, jobId));
 		await dispatchWebhooks(env, input.userId, "message.failed", { messageId, error });
 		throw err;
+	}
+}
+
+/**
+ * The sender domain's own pixel host wins over APP_URL so the pixel matches the From domain.
+ * A missing origin or an unapplied migration sends the message untracked rather than failing it.
+ */
+async function withTrackingPixel(env: CloudflareEnv, messageId: string, from: string, html: string, publicOrigin: string | undefined): Promise<string> {
+	try {
+		const host = await getTrackingHostForSender(env, from);
+		const origin = host ? `https://${host}` : resolveTrackingOrigin(env.APP_URL, publicOrigin);
+		if (!origin) return html;
+		const token = await ensureTrackingToken(env, messageId);
+		return injectTrackingPixel(html, buildTrackingPixelUrl(origin, token));
+	} catch (error) {
+		console.error("Read receipt skipped", error);
+		return html;
 	}
 }
 

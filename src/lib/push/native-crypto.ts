@@ -74,7 +74,12 @@ export async function encryptPreview(devicePublicKey: string, plaintext: Uint8Ar
 
 /** Imports an APNs auth key (the .p8 file: PKCS#8 PEM). */
 export async function importApnsKey(pem: string): Promise<CryptoKey> {
-	const body = pem.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, "").replace(/\s+/g, "");
+	// Secrets pasted into dashboards often carry quotes, literal "\n" or CRLFs.
+	const body = pem
+		.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, "")
+		.replace(/\\n/g, "")
+		.replace(/["']/g, "")
+		.replace(/\s+/g, "");
 	return crypto.subtle.importKey("pkcs8", buffer(fromBase64(body)), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
 }
 

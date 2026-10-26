@@ -1,3 +1,4 @@
+import { withDatabase } from "./src/db/with-database";
 import { withStorage } from "./src/lib/storage";
 import vinextHandler from "vinext/server/fetch-handler";
 import {
@@ -6,7 +7,8 @@ import {
 	type InboundQueueMessage,
 } from "./src/lib/email/inbound";
 import { processOutboundQueue, type OutboundQueueMessage } from "./src/lib/email/send";
-import { isInboundQueueMessage, isWebhookRetryMessage } from "./worker-utils";
+import { isImportJobMessage, isInboundQueueMessage, isWebhookRetryMessage } from "./worker-utils";
+import { processImportJob, sweepImportJobs } from "./src/lib/import/jobs";
 import { processWebhookRetry, type WebhookRetryMessage } from "./src/lib/email/webhooks";
 import { resolveIncomingMail, forwardMessage } from "./src/lib/email/incoming";
 import { getUserFromSession } from "./src/lib/auth/session";
@@ -22,14 +24,15 @@ import { processAgentDraftJob } from "./src/lib/agent/jobs/utils";
 import { runAgentMaintenance } from "./src/lib/agent/maintenance";
 import { runTrashRetention } from "./src/lib/email/trash-retention";
 import { runDriveTrashRetention } from "./src/lib/drive/retention";
-import { applyPendingMigrationsIfInitialized } from "./src/lib/migrations/service";
 import { runAccountRetention } from "./src/lib/accounts/deletion";
 import { runJmapChangeRetention } from "./src/lib/jmap/changes";
+import { runFollowUpReminders } from "./src/lib/follow-ups/service";
+import { applyPendingMigrationsIfInitialized } from "./src/lib/migrations/service";
 export { RealtimeHub } from "./src/lib/realtime/hub";
 
 export default {
 	async fetch(request: Request, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
-		const env = withStorage(rawEnv);
+		const env = withDatabase(withStorage(rawEnv));
 		const url = new URL(request.url);
 		if (url.pathname === "/api/realtime") {
 			if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -54,7 +57,7 @@ export default {
 	},
 
 	async email(message: ForwardableEmailMessage, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
-		const env = withStorage(rawEnv);
+		const env = withDatabase(withStorage(rawEnv));
 		try {
 			if (message.rawSize > 25 * 1024 * 1024) {
 				message.setReject("Message rejected: raw email exceeds the 25 MiB receiving limit. Send a download link instead.");
@@ -103,7 +106,7 @@ export default {
 	},
 
 	async queue(batch: MessageBatch, rawEnv: CloudflareEnv): Promise<void> {
-		const env = withStorage(rawEnv);
+		const env = withDatabase(withStorage(rawEnv));
 		for (const msg of batch.messages) {
 			try {
 				if (isInboundQueueMessage(msg.body)) {
@@ -112,6 +115,8 @@ export default {
 					await processAgentDraftJob(env, (msg.body as { jobId: string }).jobId);
 				} else if (isWebhookRetryMessage(msg.body)) {
 					await processWebhookRetry(env, msg.body as WebhookRetryMessage);
+				} else if (isImportJobMessage(msg.body)) {
+					await processImportJob(env, msg.body);
 				} else if (typeof msg.body === "object" && msg.body !== null && (msg.body as { kind?: unknown }).kind === "email.scheduled") {
 					await processOutboundQueue(env, msg.body as OutboundQueueMessage);
 				} else {
@@ -131,12 +136,14 @@ export default {
 	},
 
 	async scheduled(controller: ScheduledController, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
-		const env = withStorage(rawEnv);
+		const env = withDatabase(withStorage(rawEnv));
 		// Workers Builds only deploys; the cron applies the migrations a release brings.
 		ctx.waitUntil(applyPendingMigrationsIfInitialized(env.DB));
 		if (controller.cron === "0 2 * * *") ctx.waitUntil(runScheduledDatabaseBackup(env, new Date(controller.scheduledTime)));
 		ctx.waitUntil(runAgentMaintenance(env));
 		ctx.waitUntil(runTrashRetention(env, new Date(controller.scheduledTime)));
+		ctx.waitUntil(runFollowUpReminders(env, new Date(controller.scheduledTime)));
+		ctx.waitUntil(sweepImportJobs(env, new Date(controller.scheduledTime)));
 		if (controller.cron === "0 2 * * *") ctx.waitUntil(runAccountRetention(env, new Date(controller.scheduledTime)));
 		// Drive trash is emptied once a day, with the 02:00 UTC cron; the 5-minute cron is for queue-like upkeep.
 		if (controller.cron === "0 2 * * *") ctx.waitUntil(runDriveTrashRetention(env, new Date(controller.scheduledTime)));

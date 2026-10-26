@@ -56,7 +56,6 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 
 	const domainId = domain?.id ?? selectedMailbox?.domainId ?? "";
 	const mailboxId = selectedMailbox?.id ?? "";
-	// The API only lets admins who can manage domains read or write domain rules.
 	const canManage = !!currentUser && canManageDomains(currentUser);
 	const rulesQueryKey = ["domain-rules", domainId] as const;
 
@@ -109,8 +108,6 @@ export function DomainRouting({ domain }: DomainRoutingProps = {}) {
 		setForm(ruleToInput(rule));
 		setDialogOpen(true);
 	}
-
-	if (!domain && currentUser && currentUser.role !== "admin") return null;
 
 	const blockRules = (rules.data?.rules ?? []).filter((r) => r.action === "reject");
 	const fallbackRules = (rules.data?.rules ?? []).filter((r) => r.action !== "reject");

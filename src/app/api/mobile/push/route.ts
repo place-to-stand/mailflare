@@ -3,12 +3,14 @@ import { z } from "zod";
 import { getEnv } from "@/lib/cloudflare";
 import { authenticateApiRequest, hasScope } from "@/lib/api/key-auth";
 import { readJsonBody } from "@/lib/http/request";
-import { registerPushDevice, unregisterPushDevice } from "@/lib/push/native";
+import { canDeliverTo, registerPushDevice, unregisterPushDevice } from "@/lib/push/native";
+import { isRelayHandle } from "@/lib/push/relay";
 import { isValidDevicePublicKey } from "@/lib/push/native-crypto";
 
 const registrationSchema = z.object({
 	platform: z.literal("apns"),
-	token: z.string().regex(/^[0-9a-fA-F]{32,200}$/),
+	// An APNs token (hex) or a handle issued by a push relay.
+	token: z.string().regex(/^(?:[0-9a-fA-F]{32,200}|mfr1\.[A-Za-z0-9_-]{20,1000})$/),
 	environment: z.enum(["production", "sandbox"]).default("production"),
 	topic: z.string().min(3).max(200),
 	publicKey: z.string().max(200).nullable().default(null),
@@ -37,8 +39,9 @@ export async function PUT(request: Request) {
 		return NextResponse.json({ error: "publicKey must be a raw uncompressed P-256 point" }, { status: 400 });
 	}
 	const { accountRef, ...registration } = parsed.data;
-	await registerPushDevice(env, auth.userId, auth.keyId, { ...registration, token: registration.token.toLowerCase(), clientRef: accountRef ?? null });
-	return NextResponse.json({ ok: true });
+	await registerPushDevice(env, auth.userId, auth.keyId, { ...registration, token: isRelayHandle(registration.token) ? registration.token : registration.token.toLowerCase(), clientRef: accountRef ?? null });
+	// Registrations are kept without APNs secrets, but nothing is sent; the app shows that instead of "On".
+	return NextResponse.json({ ok: true, deliverable: canDeliverTo(env, registration.token) });
 }
 
 export async function DELETE(request: Request) {

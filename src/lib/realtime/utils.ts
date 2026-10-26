@@ -57,7 +57,7 @@ export async function notifyUsersOfNewMessage(
 ): Promise<void> {
 	// Next dev uses a bindings-only proxy; realtime delivery runs in worker.ts.
 	if (!env.REALTIME) return;
-	await Promise.allSettled([
+	const results = await Promise.allSettled([
 		...userIds.map((userId) => {
 			const hub = env.REALTIME.getByName(userId);
 			return hub.fetch("https://mailflare-realtime/notify", {
@@ -68,4 +68,7 @@ export async function notifyUsersOfNewMessage(
 		}),
 		...(payload.type === "agent_draft" ? [] : [sendPushNotifications(env, userIds, payload), sendNativePush(env, userIds, payload)]),
 	]);
+	for (const result of results) {
+		if (result.status === "rejected") console.error("New-message notification failed", result.reason);
+	}
 }

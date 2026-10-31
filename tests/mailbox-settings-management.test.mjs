@@ -170,8 +170,9 @@ test("mailbox-only admins and ordinary users cannot configure other users' mailb
 		assert.equal((await f.read(actor, "m-sam")).status, 404);
 		assert.equal((await f.patch(actor, "m-sam", { displayName: "Denied" })).status, 404);
 		assert.equal((await aliases.GET(f.request(actor, "/api/mailboxes/m-sam/aliases"), context("m-sam"))).status, 404);
-		assert.equal((await aliases.POST(f.request(actor, "/api/mailboxes/m-sam/aliases", "POST", { localPart: "denied", domainId: "one" }), context("m-sam"))).status, 404);
-		assert.equal((await aliases.DELETE(f.request(actor, "/api/mailboxes/m-sam/aliases?aliasId=missing", "DELETE"), context("m-sam"))).status, 404);
+		// Fork: aliases are admin-only, so a non-admin's create or delete is refused (403) before the mailbox lookup.
+		assert.equal((await aliases.POST(f.request(actor, "/api/mailboxes/m-sam/aliases", "POST", { localPart: "denied", domainId: "one" }), context("m-sam"))).status, actor === "remote" ? 403 : 404);
+		assert.equal((await aliases.DELETE(f.request(actor, "/api/mailboxes/m-sam/aliases?aliasId=missing", "DELETE"), context("m-sam"))).status, actor === "remote" ? 403 : 404);
 		assert.equal((await avatar.GET(f.request(actor, "/api/mailboxes/m-sam/avatar"), context("m-sam"))).status, 404);
 		assert.equal((await avatar.POST(f.request(actor, "/api/mailboxes/m-sam/avatar", "POST", new FormData()), context("m-sam"))).status, 404);
 	}
@@ -191,11 +192,12 @@ test("owners and shared mailbox grants keep their existing settings permissions"
 	assert.equal((await f.patch("sam", "m-shared", { displayName: "Shared Updated" })).status, 200);
 });
 
-test("administrative mailbox settings preserve the account license requirement", async t => {
+test("administrative mailbox settings follow the fork license policy", async t => {
+	// Fork: src/lib/licenses/fork-policy.ts grants every license feature, so the plan does not gate this.
 	for (const plan of ["community", "pro"]) {
 		const f = await fixture(t, plan);
-		assert.equal((await f.read("primary", "m-sam")).status, plan === "pro" ? 200 : 404);
-		assert.equal((await f.patch("primary", "m-sam", { displayName: "Licensed" })).status, plan === "pro" ? 200 : 404);
+		assert.equal((await f.read("primary", "m-sam")).status, 200);
+		assert.equal((await f.patch("primary", "m-sam", { displayName: "Licensed" })).status, 200);
 		assert.equal((await f.patch("sam", "m-sales", { displayName: "My Sales" })).status, 200);
 	}
 });

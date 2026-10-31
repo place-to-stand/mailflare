@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { LOCAL_FEATURES_ENABLED } from "@/lib/licenses/fork-policy";
 import { getServerTranslator } from "@/lib/i18n/server";
-import { Check, ExternalLink } from "lucide-react";
+import { Check, ExternalLink } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

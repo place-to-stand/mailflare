@@ -91,7 +91,7 @@
     "dayjs": "^1.11.23",
     "dompurify": "^3.4.17",
     "drizzle-orm": "^0.45.4",
-    "mailauth": "^4.13.3",
+    "mailauth": "^8.0.4",
     "mimetext": "^3.0.28",
     "mysql2": "^3.24.6",
     "nanoid": "^6.0.2",
@@ -117,7 +117,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.65.0",
+    "@cloudflare/vite-plugin": "^1.66.0",
     "@cloudflare/workers-types": "^5.20261024.1",
     "@electric-sql/pglite-socket": "^0.2.14",
     "@next/eslint-plugin-next": "16.4.3",
@@ -147,7 +147,7 @@
     "typescript": "^5.7.4",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
     "vite-plus": "1.4.0",
-    "wrangler": "^4.152.0"
+    "wrangler": "^4.154.0"
   },
   "overrides": {
     "@esbuild-kit/core-utils": {

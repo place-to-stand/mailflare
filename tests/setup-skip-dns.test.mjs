@@ -43,7 +43,8 @@ const { SqliteDatabase, applyMigrations, setupDomain, setupMx, register } = awai
 function post(handler, path, body) {
 	return handler(new Request(`https://mailflare.test${path}`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json", Origin: "https://mailflare.test" },
+		// The fork requires the operator's SETUP_TOKEN on every first-run setup call.
+		headers: { "Content-Type": "application/json", Origin: "https://mailflare.test", "X-Mailflare-Setup-Token": "setup-test-token" },
 		body: JSON.stringify(body),
 	}));
 }
@@ -52,7 +53,7 @@ async function fixture(t) {
 	const database = new SqliteDatabase(":memory:");
 	t.after(() => database.db.close());
 	await applyMigrations(database, join(root, "drizzle/migrations"));
-	const env = { DB: database, MAILFLARE_RUNTIME: "node", EMAIL: { configured: true } };
+	const env = { DB: database, MAILFLARE_RUNTIME: "node", EMAIL: { configured: true }, SETUP_TOKEN: "setup-test-token" };
 	globalThis.__mailflareNodeEnv = env;
 	t.after(() => { delete globalThis.__mailflareNodeEnv; });
 	const calls = [];

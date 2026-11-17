@@ -12,6 +12,8 @@
 !.yarn/versions
 
 # testing
+test-results/
+playwright-report/
 /coverage
 
 # next.js
@@ -63,3 +65,4 @@ mailflare-landing
 .agents
 skills-lock.json
 /dist/
+/tests/.tmp-*

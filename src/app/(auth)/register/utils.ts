@@ -45,11 +45,11 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 	return data;
 }
 
-export async function submitPrimaryDomain(hostname: string): Promise<{ ok: boolean; data: DomainSetupResult }> {
+export async function submitPrimaryDomain(hostname: string, skipDns = false): Promise<{ ok: boolean; data: DomainSetupResult }> {
 	const res = await fetch("/api/setup/domain", {
 		method: "POST",
 		headers: setupHeaders(true),
-		body: JSON.stringify({ hostname }),
+		body: JSON.stringify(skipDns ? { hostname, skipDns: true } : { hostname }),
 	});
 
 	return {
@@ -86,13 +86,15 @@ export async function submitRegistration(
 						replaceMxRecords: payload.replaceMxRecords,
 						skipDns: payload.skipDns,
 						username: form.get("username"),
-						password: form.get("password"),
+						password: form.get("usePasskey") === "on" ? undefined : form.get("password"),
+						usePasskey: form.get("usePasskey") === "on",
 						resetEmail: form.get("resetEmail"),
 						turnstileToken: form.get("turnstileToken"),
 					}
 				: {
 						username: form.get("username"),
-						password: form.get("password"),
+						password: form.get("usePasskey") === "on" ? undefined : form.get("password"),
+						usePasskey: form.get("usePasskey") === "on",
 						resetEmail: form.get("resetEmail"),
 						turnstileToken: form.get("turnstileToken"),
 					},

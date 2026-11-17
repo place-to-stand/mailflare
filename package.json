@@ -95,7 +95,7 @@
     "mimetext": "^3.0.28",
     "mysql2": "^3.24.6",
     "nanoid": "^6.0.2",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "nodemailer": "^10.2.1",
     "parse-srcset": "^1.0.2",
     "parse5": "^8.0.1",

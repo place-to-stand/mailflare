@@ -11,6 +11,7 @@ import { applySpamFeedback } from "@/lib/spam/feedback";
 import { claimMessageActionUndoToken, releaseMessageActionUndoClaim } from "./claims";
 import {
 	actionNeedsManage,
+	actionNeedsWrite,
 	getChangedStateFields,
 	getMessageActionPatch,
 	isReversibleMessageAction,
@@ -289,7 +290,7 @@ export async function applyMessageActionForUser(
 			continue;
 		}
 		const access = accessByMailbox.get(row.mailboxId);
-		const required = actionNeedsManage(action) ? access?.canManage : access?.canRead;
+		const required = actionNeedsManage(action) ? access?.canManage : actionNeedsWrite(action) ? access?.canSendOnBehalf : access?.canRead;
 		if (!required) {
 			skipped.push({ id: row.id, reason: "forbidden" });
 			continue;
@@ -468,7 +469,7 @@ async function performUndoMessageAction(
 		const plan = planUndoRecord(
 			record,
 			current,
-			{ canRead: !!access?.canRead, canManage: !!access?.canManage },
+			{ canRead: !!access?.canRead, canManage: !!access?.canManage, canWrite: !!access?.canSendOnBehalf },
 			record.previous.folderId ? folderMailboxes.get(record.previous.folderId) : null,
 		);
 		if (!("patch" in plan)) {

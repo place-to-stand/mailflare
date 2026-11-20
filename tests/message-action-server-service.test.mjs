@@ -39,7 +39,7 @@ await build({
 			alias(/^@\/db$/, "mock-db", "export function getDb() { return globalThis.__messageDb; }");
 			alias(/^@\/lib\/mailboxes\/access$/, "mock-access", `
 				export async function getMailboxAccessLevel() {
-					return { canRead: true, canManage: true };
+					return globalThis.__accessLevel ?? { canRead: true, canSendOnBehalf: true, canManage: true };
 				}
 			`);
 			alias(/^@\/lib\/mailboxes\/audit$/, "mock-audit", `
@@ -388,4 +388,20 @@ test("a CAS race rejects a stale archive snapshot instead of signing it", async 
 	assert.deepEqual(applied.skipped, [{ id: "m1", reason: "stale" }]);
 	assert.equal(applied.undoToken, undefined);
 	sqlite.exec("DROP TRIGGER block_archive");
+});
+
+
+test("fork: read-only access cannot star shared mail but can still mark it read", async () => {
+	reset();
+	globalThis.__accessLevel = { canRead: true, canSendOnBehalf: false, canManage: false };
+	try {
+		const starred = await m.applyMessageActionForUser({}, user, { action: "star", messageIds: ["m1"] });
+		assert.equal(starred.applied.length, 0);
+		assert.deepEqual(starred.skipped, [{ id: "m1", reason: "forbidden" }]);
+		assert.equal(rowState().starred, 0);
+		const read = await m.applyMessageActionForUser({}, user, { action: "read", messageIds: ["m1"] });
+		assert.equal(read.applied.length, 1);
+	} finally {
+		delete globalThis.__accessLevel;
+	}
 });

@@ -30,6 +30,11 @@ export function actionNeedsManage(action: ReversibleMessageAction): boolean {
 	return action !== "read" && action !== "unread" && action !== "star" && action !== "unstar";
 }
 
+/** Fork: the star flag is shared by everyone on the mailbox, so it needs more than read-only access (as the star route and JMAP). */
+export function actionNeedsWrite(action: ReversibleMessageAction): boolean {
+	return action === "star" || action === "unstar";
+}
+
 /** Types the server reads for an action target; no bodies or internal keys. */
 export type MessageActionTarget = {
 	id: string;
@@ -148,7 +153,7 @@ function fieldsMatch(
 	return fields.every((field) => left[field] === right[field]);
 }
 
-export type UndoAccess = { canRead: boolean; canManage: boolean };
+export type UndoAccess = { canRead: boolean; canManage: boolean; canWrite?: boolean };
 
 export type UndoRecordPlan =
 	| { id: string; patch: Partial<MessageStateSnapshot>; fields: MessageStateField[] }
@@ -175,6 +180,7 @@ export function planUndoRecord(
 
 	const needsManage = fields.some((field) => field === "status" || field === "folderId" || field === "snoozedUntil");
 	if (!access.canRead || (needsManage && !access.canManage)) return { id: record.id, reason: "forbidden" };
+	if (fields.includes("starred") && !access.canWrite) return { id: record.id, reason: "forbidden" };
 
 	if (fields.includes("status") && !isValidReversibleStatus(record.previous.status)) {
 		return { id: record.id, reason: "invalid_target" };

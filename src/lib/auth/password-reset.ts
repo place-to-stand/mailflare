@@ -2,7 +2,7 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { passwordResetTokens, users } from "@/db/schema";
 import { newId } from "@/lib/ids";
-import { hashPassword } from "@/lib/auth/password";
+import { hasPasswordHash, hashPassword } from "@/lib/auth/password";
 import { deleteUserSessions, hashSessionToken } from "@/lib/auth/session";
 import { getBranding } from "@/lib/branding/service";
 import { sendSystemEmail } from "@/lib/email/system-mail";
@@ -30,6 +30,11 @@ export async function requestPasswordReset(env: CloudflareEnv, email: string, or
 	}
 	if (!user.resetEmail) {
 		console.warn("Password reset skipped: account has no recovery email");
+		return;
+	}
+	// Fork: a passkey-only account must not regain password sign-in through email.
+	if (!hasPasswordHash(user.passwordHash)) {
+		console.warn("Password reset skipped: account signs in with passkeys only");
 		return;
 	}
 
@@ -77,10 +82,9 @@ export async function completePasswordReset(
 			),
 		)
 		.limit(1);
-	if (!row) return { ok: false, error: "This reset link is invalid or has expired. Request a new one." };
-
-	// A passkey-only account can set its first password this way. Sign-in with
-	// that password still goes through the account's second-factor rules.
+	// Fork: a reset never creates a password for a passkey-only account; a token
+	// issued before the password was removed must not become a bypass.
+	if (!row || !hasPasswordHash(row.passwordHash)) return { ok: false, error: "This reset link is invalid or has expired. Request a new one." };
 	const consumed = await db
 		.update(passwordResetTokens)
 		.set({ usedAt: new Date() })

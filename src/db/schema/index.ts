@@ -275,6 +275,21 @@ export const jmapChangeFloor = sqliteTable("jmap_change_floor", {
 	seq: integer("seq").notNull().default(0),
 });
 
+/**
+ * Short-lived, single-use undo tokens. The nonce is consumed by the first
+ * authenticated undo request and only pruned after it expires; it is internal
+ * security state and deliberately excluded from backups.
+ */
+export const messageActionUndoClaims = sqliteTable(
+	"message_action_undo_claims",
+	{
+		nonce: text("nonce").primaryKey(),
+		userId: text("user_id").notNull(),
+		expiresAt: timestamp("expires_at").notNull(),
+	},
+	(table) => [index("message_action_undo_claims_expires_idx").on(table.expiresAt)],
+);
+
 export const apiKeys = sqliteTable("api_keys", {
 	id: text("id").primaryKey(),
 	/** `device` keys come from a mobile sign-in (`/api/auth/device`) and are listed under Devices. */
@@ -1090,6 +1105,12 @@ export const appSettings = sqliteTable("app_settings", {
 	spamDomainAgeCheck: bool("spam_domain_age_check").notNull().default(true),
 	/** JSON: brands the administrator added for display-name impersonation checks (see src/lib/spam/settings.ts). */
 	spamBrands: text("spam_brands"),
+	/** Run the update workflow and apply pending migrations automatically (cron). Off by default. */
+	autoUpdate: bool("auto_update").notNull().default(false),
+	/** Release version the cron last dispatched, so it does not dispatch the same one every five minutes. */
+	/** "release": update on a new package.json version; "commit": update on any new upstream commit. */
+	autoUpdateChannel: text("auto_update_channel", { enum: ["release", "commit"] }).notNull().default("release"),
+	autoUpdateDispatchedVersion: text("auto_update_dispatched_version"),
 	updatedAt: timestamp("updated_at")
 		.notNull()
 		.$defaultFn(() => new Date()),

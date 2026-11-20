@@ -1,3 +1,4 @@
+import { readResponseJson } from "@/lib/http/response";
 import { clearClientSessionToken } from "@/lib/auth/client";
 import { SETUP_TOKEN_HEADER } from "@/lib/auth/setup-token-utils";
 import type {
@@ -34,14 +35,14 @@ export async function prepareSetup(): Promise<{ ok: boolean; data: SetupPreparat
 	const res = await fetch("/api/setup/prepare", { method: "POST", headers: setupHeaders() });
 	return {
 		ok: res.ok,
-		data: (await res.json()) as SetupPreparationResult,
+		data: (await readResponseJson(res)) as SetupPreparationResult,
 	};
 }
 
 export async function getSetupStatus(): Promise<SetupStatus> {
 	const res = await fetch("/api/setup/status");
-	const data = (await res.json()) as SetupStatus;
-	if (!res.ok) throw new Error(data.error ?? "Could not load setup status");
+	const data = (await readResponseJson(res)) as SetupStatus;
+	if (!res.ok || typeof data.hasAdminAccount !== "boolean") throw new Error(data.error ?? "Could not load setup status");
 	return data;
 }
 
@@ -54,7 +55,7 @@ export async function submitPrimaryDomain(hostname: string, skipDns = false): Pr
 
 	return {
 		ok: res.ok,
-		data: (await res.json()) as DomainSetupResult,
+		data: (await readResponseJson(res)) as DomainSetupResult,
 	};
 }
 
@@ -67,7 +68,7 @@ export async function checkExistingMx(hostname: string): Promise<{ ok: boolean; 
 
 	return {
 		ok: res.ok,
-		data: (await res.json()) as MxCheckResult,
+		data: (await readResponseJson(res)) as MxCheckResult,
 	};
 }
 
@@ -101,7 +102,7 @@ export async function submitRegistration(
 		),
 	});
 
-	const data = (await res.json()) as RegisterResult;
+	const data = (await readResponseJson(res)) as RegisterResult;
 	if (res.ok) {
 		clearClientSessionToken();
 		try {

@@ -85,3 +85,13 @@ test("a token that was already used is rejected before any write", async () => {
 	assert.equal(sqlite.prepare("SELECT password_hash FROM users").get().password_hash, "$2b$12$old");
 	assert.equal(globalThis.resetRace.sessions, 0);
 });
+
+test("fork: a reset link never gives a passkey-only account a password", async () => {
+	setup();
+	sqlite.prepare("UPDATE users SET password_hash='!passkey-only'").run();
+	const result = await reset();
+	assert.equal(result.ok, false);
+	assert.match(result.error, /invalid or has expired/);
+	assert.equal(sqlite.prepare("SELECT password_hash FROM users").get().password_hash, "!passkey-only");
+	assert.equal(globalThis.resetRace.sessions, 0);
+});

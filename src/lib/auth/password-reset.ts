@@ -21,8 +21,22 @@ const TOKEN_MINUTES = 30;
 export async function requestPasswordReset(env: CloudflareEnv, email: string, origin: string, t: Translator): Promise<void> {
 	const db = getDb(env);
 	const [user] = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
-	// A passkey-only account must not regain password sign-in through email.
-	if (!user || user.disabled || !user.resetEmail || !hasPasswordHash(user.passwordHash)) return;
+	// The response stays uniform for the caller, but the operator needs to know
+	// why no mail went out, so each skip is logged (without the address).
+	if (!user) return;
+	if (user.disabled) {
+		console.warn("Password reset skipped: account is disabled");
+		return;
+	}
+	if (!user.resetEmail) {
+		console.warn("Password reset skipped: account has no recovery email");
+		return;
+	}
+	// Fork: a passkey-only account must not regain password sign-in through email.
+	if (!hasPasswordHash(user.passwordHash)) {
+		console.warn("Password reset skipped: account signs in with passkeys only");
+		return;
+	}
 
 	const token = newId("prt");
 	await db.insert(passwordResetTokens).values({
@@ -68,10 +82,9 @@ export async function completePasswordReset(
 			),
 		)
 		.limit(1);
+	// Fork: a reset never creates a password for a passkey-only account; a token
+	// issued before the password was removed must not become a bypass.
 	if (!row || !hasPasswordHash(row.passwordHash)) return { ok: false, error: "This reset link is invalid or has expired. Request a new one." };
-
-	// A password reset never creates a password for a passkey-only account; a
-	// token issued before the password was removed must not become a bypass.
 	const consumed = await db
 		.update(passwordResetTokens)
 		.set({ usedAt: new Date() })
